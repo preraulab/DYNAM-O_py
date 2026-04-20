@@ -50,21 +50,52 @@ Stage-by-stage verification:
 | extract pass-1 | 20 s | 84 s | 4.2× |
 | extract pass-2 | 21 s | 32 s | 1.5× |
 
-## Install (development)
+## Install from scratch
+
+### Prerequisites
+
+- **Python ≥ 3.9**
+- **Rust toolchain** (`cargo`, `rustc`) — install via [rustup](https://rustup.rs/):
+  ```bash
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+  ```
+- **maturin** — builds the Rust extensions against CPython:
+  ```bash
+  pip install maturin
+  ```
+- **MATLAB is NOT required** to run the pipeline. It is only needed to
+  regenerate ground-truth `.mat` intermediates under `data_cache/` (the
+  `scripts/export_*.m` files). Accuracy benchmarking against MATLAB uses
+  those exported files, which can be produced once and reused.
+
+### Install
 
 ```bash
 git clone git@github.com:preraulab/DYNAM-O_py.git
 cd DYNAM-O_py
 
-# Rust merge extension (dynamo_rs)
-maturin develop --release -m rust/Cargo.toml
+# (recommended) fresh virtualenv
+python -m venv .venv && source .venv/bin/activate
+pip install --upgrade pip maturin
 
-# Python package
+# Build + install the Rust merge / trim / watershed extension (dynamo_rs)
+maturin develop --release -m rust/pyproject.toml
+
+# Build + install the multitaper spectrogram Rust extension (multitaper_rs)
+# from its own repo — it's a sibling dependency, not on PyPI yet:
+git clone git@github.com:preraulab/multitaper_toolbox.git
+maturin develop --release -m multitaper_toolbox/src/python/rust/pyproject.toml
+
+# Install the Python package
 pip install -e .
 
-# multitaper_rs must also be installed
-pip install multitaper_rs   # or build from source: preraulab/multitaper_toolbox
+# (optional) test dependencies
+pip install -e '.[test]'
 ```
+
+Python runtime deps (installed automatically by `pip install -e .`):
+numpy ≥ 1.24, scipy ≥ 1.11, scikit-image ≥ 0.22, matplotlib ≥ 3.7, pandas ≥ 2.0,
+joblib ≥ 1.3, tqdm ≥ 4.65, colorcet ≥ 3.0.
 
 ## Usage
 
@@ -72,7 +103,7 @@ pip install multitaper_rs   # or build from source: preraulab/multitaper_toolbox
 import scipy.io as sio
 from pydynamo import run_dynamo
 
-m = sio.loadmat("path/to/example_data.mat", simplify_cells=True)
+m = sio.loadmat("example_data.mat", simplify_cells=True)
 out = run_dynamo(
     m["data"].ravel(),
     float(m["Fs"]),
@@ -106,13 +137,13 @@ difference is pure data difference (not color scaling or layout).
 ## Validation data
 
 All ground-truth comparison uses `runDYNAMO` output from the DYNAM-O repo's
-bundled example EEG. Regenerate MATLAB intermediates once via:
+bundled example EEG (`example_data.mat`). Regenerate MATLAB intermediates
+once from the DYNAM-O repo root:
 
 ```matlab
-cd DYNAMO_dev
-run('DYNAM-O_py/scripts/export_bisect_intermediates.m')
-run('DYNAM-O_py/scripts/export_merge_diagnostics.m')
-run('DYNAM-O_py/scripts/export_pass1_diagnostics.m')
+run('<path-to-DYNAM-O_py>/scripts/export_bisect_intermediates.m')
+run('<path-to-DYNAM-O_py>/scripts/export_merge_diagnostics.m')
+run('<path-to-DYNAM-O_py>/scripts/export_pass1_diagnostics.m')
 ```
 
 These populate `data_cache/` with `.mat` / `.csv` files (not version-controlled).
