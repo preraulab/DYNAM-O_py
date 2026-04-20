@@ -1,0 +1,212 @@
+[
+  {
+    "stage": "A1. slope_test submask",
+    "status": "pass",
+    "agreement": 1.0,
+    "jaccard": 1.0,
+    "recall": 1.0,
+    "precision": 1.0,
+    "py_true_frac": 0.002188614825676829,
+    "mat_true_frac": 0.002188614825676829,
+    "n": 502601,
+    "notes": "MATLAB reference saved via export_bisect_intermediates.m"
+  },
+  {
+    "stage": "A2. artifacts (slope_test=True)",
+    "status": "pass",
+    "agreement": 0.9998905692587161,
+    "jaccard": 0.9962850388382303,
+    "recall": 0.9981052916497496,
+    "precision": 0.9981728361643094,
+    "py_true_frac": 0.029401055708205913,
+    "mat_true_frac": 0.029403045358047438,
+    "n": 502601
+  },
+  {
+    "stage": "B1. spect1 shape match",
+    "status": "pass",
+    "py_shape": "(308, 100501)",
+    "mat_shape": "(308, 100501)"
+  },
+  {
+    "stage": "B2. spect1 values (FFT-noise bound)",
+    "status": "pass",
+    "max_abs": 0.009218032071657944,
+    "max_rel": 2.7804562366301045e-05,
+    "p99_rel": 1.693178030569245e-06,
+    "n": 30954308,
+    "cos": 0.9999999999999757
+  },
+  {
+    "stage": "C1. spect2 shape match",
+    "status": "pass",
+    "py_shape": "(308, 100481)",
+    "mat_shape": "(308, 100481)"
+  },
+  {
+    "stage": "C2. spect2 values (FFT-noise bound)",
+    "status": "pass",
+    "max_abs": 0.03147775732213631,
+    "max_rel": 5.513075521247922e-05,
+    "p99_rel": 2.0892121511130492e-06,
+    "n": 30948148,
+    "cos": 0.9999999999999806
+  },
+  {
+    "stage": "D1. baseline1 from MATLAB spect1 (should be bit-identical)",
+    "status": "pass",
+    "max_abs": 1.4305114737211966e-07,
+    "max_rel": 9.195650898516244e-08,
+    "p99_rel": 7.616402388309044e-08,
+    "n": 308,
+    "cos": 0.9999999999999933
+  },
+  {
+    "stage": "D2. baseline1 from pydynamo spect1 (FFT-noise bound)",
+    "status": "pass",
+    "max_abs": 5.861057943423731e-07,
+    "max_rel": 4.90935752702752e-06,
+    "p99_rel": 2.7954568786227626e-06,
+    "n": 308,
+    "cos": 0.9999999999999859
+  },
+  {
+    "stage": "E1. baseline2 from MATLAB spect2 (should be bit-identical)",
+    "status": "pass",
+    "max_abs": 2.861022947442393e-07,
+    "max_rel": 9.337791817666542e-08,
+    "p99_rel": 7.789420247384033e-08,
+    "n": 308,
+    "cos": 0.9999999999999963
+  },
+  {
+    "stage": "F1. spect1_norm bit-identity",
+    "status": "pass",
+    "max_abs": 0.0,
+    "max_rel": 0.0,
+    "p99_rel": 0.0,
+    "n": 30954308,
+    "cos": 1.0000000000000002
+  },
+  {
+    "stage": "G1. pass-1 seg_samples, n_segments",
+    "status": "info",
+    "seg_samples": 600,
+    "n_seg": 168,
+    "dt1": 0.049999999999272404,
+    "n_stimes": 100501
+  },
+  {
+    "stage": "G2. pydynamo seg start alignment",
+    "status": "pass",
+    "py_n_seg": 168,
+    "mat_n_seg": 168
+  },
+  {
+    "stage": "H1. pass-1 peaks on MATLAB spect1_norm",
+    "status": "info",
+    "n_peaks": 10976,
+    "notes": "MATLAB pass-1 count not separately saved; this is informational only"
+  },
+  {
+    "stage": "I1. MATLAB spect2_masked mask fraction",
+    "status": "info",
+    "mat_mask_nonzero_frac": 0.14728580850783057
+  },
+  {
+    "stage": "I2. pydynamo mask_spectrogram on reconstructed mask",
+    "status": "pass",
+    "max_abs": 0.0038332383846864104,
+    "max_rel": 5.9573788642684376e-08,
+    "p99_rel": 5.284885356427115e-08,
+    "n": 4558223,
+    "cos": 0.9999999999999954,
+    "notes": "Compared inside the mask only; reconstruction from mat_spect2_masked>0 loses watershed 0-line pixels"
+  },
+  {
+    "stage": "J1. pass-2 peaks vs MATLAB pre-refine",
+    "status": "close",
+    "py": 2825,
+    "mat": 2581,
+    "recall": 0.9469197985277025,
+    "precision": 0.8651327433628319,
+    "ratio": 1.09453700116234,
+    "notes": "Hungarian match at 0.5s/0.5Hz gate. recall<100% means pydynamo is missing some MATLAB peaks; precision<100% means pydynamo has spurious peaks."
+  },
+  {
+    "stage": "K1. refined freq vs MATLAB (time-matched)",
+    "status": "close",
+    "n_matched": 2505,
+    "p50_abs_Hz": 0.0006943120593980723,
+    "p95_abs_Hz": 0.0022855098303132568,
+    "max_abs_Hz": 5.009645315996497,
+    "notes": "p50 << 0.1 Hz means refinement is essentially exact for median peak."
+  },
+  {
+    "stage": "L1. SOpower_norm vs MATLAB",
+    "status": "close",
+    "max_abs": 0.0018914633334290443,
+    "max_rel": 86.13990067762606,
+    "p99_rel": 0.007797010714736958,
+    "n": 487823,
+    "cos": 0.9999999961462256
+  },
+  {
+    "stage": "M1. SOphase_norm vs MATLAB (with MATLAB SOS)",
+    "status": "close",
+    "max_abs": 6.283002587107234,
+    "max_rel": 10508.171585963168,
+    "p99_rel": 0.475880726204345,
+    "n": 487823,
+    "cos": 0.9874712608052837
+  },
+  {
+    "stage": "M2. SOphase circular error (excl artifacts)",
+    "status": "pass",
+    "median_rad": 0.0008133803256171745,
+    "p95_rad": 0.027841805870460933,
+    "p99_rad": 0.1372324087343981,
+    "max_rad": 3.1328361787047285,
+    "n": 487823,
+    "notes": "Circular distance = |wrap(py - mat, 2\u03c0)|. If median > 0.01 rad, filter outputs diverge beyond edge transients."
+  },
+  {
+    "stage": "M3. SOphase circular error [first_5pct]",
+    "status": "info",
+    "median_rad": 0.020268748691393057,
+    "p95_rad": 0.31793737851200193,
+    "n": 23013
+  },
+  {
+    "stage": "M3. SOphase circular error [middle_90pct]",
+    "status": "info",
+    "median_rad": 0.0006359154572237458,
+    "p95_rad": 0.01008291269170128,
+    "n": 440282
+  },
+  {
+    "stage": "M3. SOphase circular error [last_5pct]",
+    "status": "info",
+    "median_rad": 0.02663128189653463,
+    "p95_rad": 0.2606620543183456,
+    "n": 24528
+  },
+  {
+    "stage": "N1. SOpower_mat bit-identity",
+    "status": "pass",
+    "max_abs": 0.0,
+    "max_rel": 0.0,
+    "p99_rel": 0.0,
+    "n": 9060,
+    "cos": 1.0000000000000002
+  },
+  {
+    "stage": "O1. SOphase_mat",
+    "status": "close",
+    "max_abs": 0.003291872449197049,
+    "max_rel": 0.33311824322425193,
+    "p99_rel": 0.10017292221840171,
+    "n": 15251,
+    "cos": 0.9998205698881931
+  }
+]
