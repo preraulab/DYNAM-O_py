@@ -27,8 +27,46 @@ import warnings
 from pathlib import Path
 
 import numpy as np
-from scipy.signal import hilbert, iirdesign, sosfiltfilt
+from scipy.signal import hilbert as _sp_hilbert, iirdesign, sosfiltfilt as _sp_sosfiltfilt
 from scipy.interpolate import interp1d
+
+# scipy's sosfiltfilt + hilbert are faster than our Rust port for single
+# signals (see scripts/bench_signal_rust_vs_scipy.py).  Rust wins for
+# unwrap (6x, bit-exact) so enable that specifically.
+_HAS_RUST_SIGNAL = False  # legacy; kept for backward-compat
+try:
+    import dynamo_rs as _dynamo_rs  # type: ignore
+    _HAS_RUST_MODULE = True
+except ImportError:
+    _dynamo_rs = None
+    _HAS_RUST_MODULE = False
+
+_USE_RUST_SOSFILTFILT = False
+_USE_RUST_HILBERT = False
+_USE_RUST_UNWRAP = _HAS_RUST_MODULE  # rust 6x faster, bit-exact
+
+
+def _sosfiltfilt(sos, x):
+    if _USE_RUST_SOSFILTFILT and _HAS_RUST_MODULE:
+        return _dynamo_rs.sosfiltfilt(
+            np.ascontiguousarray(sos, np.float64),
+            np.ascontiguousarray(x, np.float64).ravel(),
+        )
+    return _sp_sosfiltfilt(sos, x)
+
+
+def _hilbert_analytic(x):
+    """Return complex analytic signal (like scipy.signal.hilbert)."""
+    if _USE_RUST_HILBERT and _HAS_RUST_MODULE:
+        re, im = _dynamo_rs.hilbert(np.ascontiguousarray(x, np.float64).ravel())
+        return re + 1j * im
+    return _sp_hilbert(x)
+
+
+def _unwrap(p):
+    if _USE_RUST_UNWRAP:
+        return _dynamo_rs.unwrap(np.ascontiguousarray(p, np.float64).ravel())
+    return np.unwrap(p)
 
 
 _FILTER_DIR = Path(__file__).parent.parent / "data_matlab_filters"
@@ -118,9 +156,9 @@ def compute_so_phase(
     else:
         sos = _get_sos(fs, SO_freqrange)
 
-    filtdata = sosfiltfilt(sos, eeg)
-    analytic = hilbert(filtdata)
-    SOphase = np.unwrap(np.angle(analytic))
+    filtdata = _sosfiltfilt(sos, eeg)
+    analytic = _hilbert_analytic(filtdata)
+    SOphase = _unwrap(np.angle(analytic))
 
     filtdata_out = filtdata.copy()
     filtdata_out[isexcluded] = np.nan
