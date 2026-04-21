@@ -122,11 +122,12 @@ def _get_sos(fs: float, so_range: tuple[float, float]) -> np.ndarray:
     sos = _load_matlab_sos(fs, so_range)
     if sos is not None:
         return sos
+    target = _candidate_filter_dirs()[0] / _matlab_sos_filename(fs, so_range)
     warnings.warn(
         f"No MATLAB-exact SOphase filter shipped for Fs={fs} SO_freqrange={so_range}; "
         f"falling back to scipy iirdesign (SOphase cos ~0.93 vs MATLAB). "
-        f"To fix: export MATLAB's filter SOS via scripts/export_bisect_intermediates.m "
-        f"and save to {_FILTER_DIR / _matlab_sos_filename(fs, so_range)}.",
+        f"To fix: design in MATLAB via DYNAM-O_rs/scripts/export_sophase_filters.m "
+        f"and save to {target}.",
         RuntimeWarning, stacklevel=3,
     )
     return _design_so_bandpass_scipy(fs, so_range)
