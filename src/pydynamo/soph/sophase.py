@@ -23,6 +23,7 @@ we fall back to scipy iirdesign and warn.
 
 from __future__ import annotations
 
+import os
 import warnings
 from pathlib import Path
 
@@ -69,7 +70,23 @@ def _unwrap(p):
     return np.unwrap(p)
 
 
-_FILTER_DIR = Path(__file__).parent.parent / "data_matlab_filters"
+def _candidate_filter_dirs() -> list[Path]:
+    """Search order for the SOphase SOS cache. First hit wins.
+
+    1. $DYNAMO_FILTER_CACHE env var (absolute override)
+    2. Sibling DYNAM-O_rs checkout: ../../DYNAM-O_rs/data_matlab_filters/
+    3. In-package fallback: pydynamo/data_matlab_filters/ (for pip installs)
+    """
+    dirs: list[Path] = []
+    env = os.environ.get("DYNAMO_FILTER_CACHE")
+    if env:
+        dirs.append(Path(env))
+    # Sibling repo: DYNAM-O_rs next to DYNAM-O_py checkout (3 up from this file)
+    repo_root = Path(__file__).resolve().parents[3]  # .../pydynamo
+    dirs.append(repo_root.parent / "DYNAM-O_rs" / "data_matlab_filters")
+    # In-package fallback (shipped with the pip wheel if anyone regenerates)
+    dirs.append(Path(__file__).parent.parent / "data_matlab_filters")
+    return dirs
 
 
 def _matlab_sos_filename(fs: float, so_range: tuple[float, float]) -> str:
@@ -79,9 +96,11 @@ def _matlab_sos_filename(fs: float, so_range: tuple[float, float]) -> str:
 
 
 def _load_matlab_sos(fs: float, so_range: tuple[float, float]) -> np.ndarray | None:
-    path = _FILTER_DIR / _matlab_sos_filename(fs, so_range)
-    if path.exists():
-        return np.ascontiguousarray(np.load(path), dtype=np.float64)
+    name = _matlab_sos_filename(fs, so_range)
+    for d in _candidate_filter_dirs():
+        path = d / name
+        if path.exists():
+            return np.ascontiguousarray(np.load(path), dtype=np.float64)
     return None
 
 
