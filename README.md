@@ -10,7 +10,7 @@ This repo is one of three coordinated implementations of DYNAM-O:
 
 - **[DYNAM-O](https://github.com/preraulab/DYNAM-O)** — authoritative MATLAB implementation. Source-of-truth algorithm, File Manager GUI, full statistical testing suite.
 - **[DYNAM-O_rs](https://github.com/preraulab/DYNAM-O_rs)** — shared pure-Rust kernel (`dynamo_rs`). The hot paths in both MATLAB (via MEX) and Python (via PyO3) delegate here.
-- **[DYNAM-O_toolbox](https://github.com/prerau/DYNAM-O_toolbox)** — parent meta-repo pinning all three as git submodules.
+- **[DYNAM-O_toolbox](https://github.com/preraulab/DYNAM-O_toolbox)** — parent meta-repo pinning all three as git submodules.
 
 ## Rust acceleration
 
