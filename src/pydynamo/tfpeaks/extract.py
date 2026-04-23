@@ -154,14 +154,21 @@ def extract_tfpeaks_segment(
     # 5) Fill the remaining 0-line (former borders) with surrounding region ids.
     # MATLAB's extractTFPeaks.m:272 paints interior+border into Ldata
     # (`Ldata(ii_pixels)=ii` where ii_pixels = rgn{ii} = union(interior,
-    # border) via Ldata2graph.m:233). expand_labels is an approximation of
-    # that painting: it fills 0-line pixels with the nearest region label.
-    # A fully MATLAB-exact border paint (painting each region's claimed
-    # border pixels in label order) produced a cleaner per-segment match
-    # but regressed the pipeline pass-2 count by -22% — likely because the
-    # border Vec after symdiff omits pixels that MATLAB's full-union
-    # approach keeps. Stick with expand_labels for now.
-    labels_merged = expand_labels(labels_merged, distance=5).astype(np.int64)
+    # border) via Ldata2graph.m:233). Two paths:
+    #   - _dynamo_rs.matlab_paint_labels: 8-conn 1-pixel dilation per label
+    #     in ascending order with dense 1..N cell indices — bit-matches the
+    #     MATLAB paint and closed the pipeline gap from +1.96% to -0.80%
+    #     when this was adopted in the Rust extract pipeline (2026-04-21).
+    #   - skimage.segmentation.expand_labels(distance=5): approximation that
+    #     fills 0-line pixels with the nearest region label. Kept as the
+    #     pure-Python fallback when dynamo_rs isn't built.
+    labels_merged = labels_merged.astype(np.int64)
+    if _HAS_RUST_WS:
+        labels_merged = _dynamo_rs.matlab_paint_labels(
+            np.ascontiguousarray(labels_merged)
+        )
+    else:
+        labels_merged = expand_labels(labels_merged, distance=5).astype(np.int64)
 
     # Resize merged labels back up to the full-segment shape if we downsampled.
     if downsample is not None and (f_f > 1 or t_f > 1):
