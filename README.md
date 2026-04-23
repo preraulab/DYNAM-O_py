@@ -1,15 +1,24 @@
-# DYNAM-O_py
+# pyDYNAM-O
 
 Python + Rust port of [DYNAM-O](https://github.com/preraulab/DYNAM-O): TF-peak
 extraction (double watershed + merge + trim + Hann refinement), SO-power /
 SO-phase histograms, and a MATLAB-style summary figure.
 
-The Rust crate `dynamo_rs` (in `rust/`) accelerates the hot paths:
-- `matlab_watershed` — bit-identical to MATLAB IPT `watershed` (Vincent-Soille
-  + FIFO priority)
-- `merge_segment` — port of `mergeWshedSegment` with the symmetric
-  `edgeWeightEqual` rule
-- `trim_regions` — port of `trimWshedRegions`
+## Siblings
+
+This repo is one of three coordinated implementations of DYNAM-O:
+
+- **[DYNAM-O](https://github.com/preraulab/DYNAM-O)** — authoritative MATLAB implementation. Source-of-truth algorithm, File Manager GUI, full statistical testing suite.
+- **[DYNAM-O_rs](https://github.com/preraulab/DYNAM-O_rs)** — shared pure-Rust kernel (`dynamo_rs`). The hot paths in both MATLAB (via MEX) and Python (via PyO3) delegate here.
+- **[DYNAM-O_toolbox](https://github.com/prerau/DYNAM-O_toolbox)** — parent meta-repo pinning all three as git submodules.
+
+## Rust acceleration
+
+The `dynamo_rs` crate (lives in the sibling `DYNAM-O_rs` repo) accelerates the hot paths:
+- `matlab_watershed` — bit-identical to MATLAB IPT `watershed` (Vincent-Soille + FIFO priority).
+- `merge_segment` — port of `mergeWshedSegment` with the symmetric `edgeWeightEqual` rule.
+- `trim_regions` — port of `trimWshedRegions`.
+- `matlab_paint_labels_in_order` — 8-conn paint-in-label-order border filling (available via `expand_labels_distance=0` on the c_api; see DYNAM-O_rs README for background).
 
 Multitaper spectrogram delegates to the existing
 [`multitaper_rs`](https://github.com/preraulab/multitaper_toolbox) crate.
