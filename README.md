@@ -14,11 +14,21 @@ This repo is one of three coordinated implementations of DYNAM-O:
 
 ## Rust acceleration
 
-The `dynamo_rs` crate (lives in the sibling `DYNAM-O_rs` repo) accelerates the hot paths:
+The `dynamo_rs` crate (lives in the sibling `DYNAM-O_rs` repo) accelerates the hot paths and now covers the full pipeline surface:
+
+Extract / refine hot paths (the main speedup):
 - `matlab_watershed` — bit-identical to MATLAB IPT `watershed` (Vincent-Soille + FIFO priority).
 - `merge_segment` — port of `mergeWshedSegment` with the symmetric `edgeWeightEqual` rule.
 - `trim_regions` — port of `trimWshedRegions`.
-- `matlab_paint_labels_in_order` — 8-conn paint-in-label-order border filling (available via `expand_labels_distance=0` on the c_api; see DYNAM-O_rs README for background).
+- `matlab_paint_labels` — 8-conn paint-in-label-order border filling; `pydynamo/tfpeaks/extract.py` now routes through this when `dynamo_rs` is available, which tightens pydynamo↔MATLAB peak-count parity.
+- `mask_spectrogram`, `hann_event_spectra`, `refine_from_spectra`, `tfpeak_histogram`.
+
+Time-series + metadata pipelines (ported this session — mirror pydynamo 1:1):
+- `so_power_from_spectrogram` — post-MTS SO-power pipeline (band-integrate → pow2db → stage interp → outlier z-score → percentile-shift normalization → optional upsample). Bit-identical to `pydynamo.soph.sopower.compute_so_power`.
+- `so_phase_from_eeg` — sosfiltfilt → hilbert → atan2 → unwrap → exclusion masking → stage interp. Bit-identical to `pydynamo.soph.sophase.compute_so_phase`.
+- `detect_artifacts` — two-band (HF + BB) robust-z-score artifact detection. Bit-identical to `pydynamo.artifacts.detect_artifacts(..., slope_test=False)`. (Slope-test branch is a follow-up — needs multitaper.)
+- `build_baseline_exclude`, `compute_baseline`, `subtract_baseline` — full baseline subpipeline.
+- `hilbert`, `sosfiltfilt`, `movmean`, `unwrap` — raw primitives (pydynamo already picks `movmean` up for the artifact detrend).
 
 Multitaper spectrogram delegates to the existing
 [`multitaper_rs`](https://github.com/preraulab/multitaper_toolbox) crate.
