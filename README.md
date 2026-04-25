@@ -118,6 +118,36 @@ joblib ≥ 1.3, tqdm ≥ 4.65, colorcet ≥ 3.0.
 
 ## Usage
 
+### Recommended sampling frequency: 100 Hz
+
+Pydynamo analyzes 0–30 Hz, so 100 Hz Nyquist is well above anything the
+pipeline cares about. Resampling higher-rate recordings (128 / 200 /
+256 / 500 / 1000 Hz) **down** to 100 Hz before calling `run_dynamo`
+gives a ~2× end-to-end speedup with zero analytical change. The
+multitaper-spectrogram NFFT is `2^nextpow2(Fs / mtm_dsfreqs)` (default
+`mtm_dsfreqs = 0.1`), so anything above **Fs = 102.4 Hz** doubles NFFT
+and spills the spectrogram past CPU L3 cache, costing 2–3× more on
+every downstream stage. Resample with scipy:
+
+```python
+import numpy as np
+from scipy.signal import resample_poly
+
+target_fs = 100
+if Fs != target_fs:
+    from fractions import Fraction
+    f = Fraction(target_fs, int(Fs)).limit_denominator(1000)
+    data = resample_poly(data, f.numerator, f.denominator)
+    Fs = target_fs
+```
+
+Zero analytical loss for sleep oscillations (slow oscillations 0.3–1.5 Hz,
+spindles 11–16 Hz, alpha 8–12 Hz, beta 13–30 Hz are all far below 50 Hz
+Nyquist). Skip the resample only if you specifically need spectral content
+above 50 Hz (e.g., gamma analysis beyond pydynamo's analyzed band).
+
+### Basic call
+
 ```python
 import scipy.io as sio
 from pydynamo import run_dynamo
