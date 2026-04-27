@@ -1,7 +1,7 @@
 %EXPORT_MATLAB_GROUND_TRUTH Re-export DYNAM-O segment_out.mat for Python validation.
 %
-% Run this from MATLAB in the DYNAMO_dev directory:
-%   cd ../DYNAMO_dev
+% Run this from MATLAB in the DYNAM-O_dev directory:
+%   cd ../DYNAM-O_dev
 %   run('../pydynamo/scripts/export_matlab_ground_truth.m')
 %
 % Why:
@@ -21,7 +21,7 @@ if ~exist(out_dir, 'dir')
     mkdir(out_dir);
 end
 
-in_path = fullfile(getenv('HOME'), 'code', 'toolboxes', 'DYNAMO_dev', 'segment_out.mat');
+in_path = fullfile(getenv('HOME'), 'code', 'toolboxes', 'DYNAM-O_dev', 'segment_out.mat');
 fprintf('Loading %s ...\n', in_path);
 S = load(in_path);
 

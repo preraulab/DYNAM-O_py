@@ -11,7 +11,7 @@
 //!   (c) FIFO tie-breaking within equal priorities (insertion order)
 //!
 //! Reference: MATLAB Coder-generated sources at
-//!   ../DYNAMO_dev/codegen/lib/matlab_watershed/
+//!   ../DYNAM-O_dev/codegen/lib/matlab_watershed/
 //! (watershed.c, FifoPriorityQueue.c, NeighborhoodProcessor.c, bwlabel.c).
 
 use ndarray::{Array2, ArrayView2};

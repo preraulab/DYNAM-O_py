@@ -1,10 +1,10 @@
-"""Multitaper spectrogram wrapper — delegates to the DYNAMO_dev submodule.
+"""Multitaper spectrogram wrapper — delegates to the DYNAM-O_dev submodule.
 
 Rather than reimplement the wrapper around multitaper_rs, we import the
 canonical Prerau-lab `multitaper_spectrogram` function already vetted for
 MATLAB equivalence. It lives as a submodule of DYNAM-O at
 
-    ../DYNAMO_dev/toolbox/helper_functions/multitaper_spectrogram/python/
+    ../DYNAM-O_dev/toolbox/helper_functions/multitaper_spectrogram/python/
 
 and internally dispatches to the Rust kernel (multitaper_rs) when available.
 
@@ -22,8 +22,10 @@ from pathlib import Path
 
 import numpy as np
 
-_SUBMODULE_PATH = Path(
-    "../DYNAMO_dev/toolbox/helper_functions/multitaper_spectrogram/python"
+_SUBMODULE_PATH = (
+    Path(__file__).resolve().parents[3]
+    / "DYNAM-O_dev" / "toolbox" / "helper_functions"
+    / "multitaper_spectrogram" / "python"
 )
 if str(_SUBMODULE_PATH) not in sys.path:
     sys.path.insert(0, str(_SUBMODULE_PATH))
