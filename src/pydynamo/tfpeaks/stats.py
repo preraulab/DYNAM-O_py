@@ -32,6 +32,7 @@ def compute_peak_stats(
 
     Columns (subset of DYNAM-O):
         PeakTime, PeakFrequency, Height, Area, Duration, Bandwidth, Volume,
+        Peakiness (= Area * Height / Volume),
         BoundingBox (4-tuple: (time_tl, freq_tl, width_s, height_Hz)),
         SegmentNum
     """
@@ -53,8 +54,8 @@ def compute_peak_stats(
     if unique_labels.size == 0:
         return pd.DataFrame(
             columns=["PeakTime", "PeakFrequency", "Height", "Area",
-                     "Duration", "Bandwidth", "Volume", "BoundingBox",
-                     "SegmentNum"]
+                     "Duration", "Bandwidth", "Volume", "Peakiness",
+                     "BoundingBox", "SegmentNum"]
         )
 
     # Treat NaN pixels as out-of-region. MATLAB does this explicitly.
@@ -84,6 +85,8 @@ def compute_peak_stats(
         area = p.area * dt * df
         volume = float(vals.sum()) * dt * df
         height = float(vals.max() - vals.min())
+        # Peakiness = Area * Height / Volume. NaN/inf if volume == 0.
+        peakiness = (area * height / volume) if volume != 0.0 else float("nan")
 
         rows.append({
             "Label": p.label,
@@ -94,6 +97,7 @@ def compute_peak_stats(
             "Duration": bb_w,
             "Bandwidth": bb_h,
             "Volume": volume,
+            "Peakiness": peakiness,
             "BoundingBox": (bb_time, bb_freq, bb_w, bb_h),
             "SegmentNum": int(segment_num),
         })
