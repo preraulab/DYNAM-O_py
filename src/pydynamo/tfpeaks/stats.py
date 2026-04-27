@@ -16,6 +16,8 @@ swap when mapping to (time, freq).
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 import pandas as pd
 from skimage.measure import regionprops
@@ -32,7 +34,7 @@ def compute_peak_stats(
 
     Columns (subset of DYNAM-O):
         PeakTime, PeakFrequency, Height, Area, Duration, Bandwidth, Volume,
-        Peakiness (= Area * Height / Volume),
+        Peakiness (= log10(Area * Height / Volume)),
         BoundingBox (4-tuple: (time_tl, freq_tl, width_s, height_Hz)),
         SegmentNum
     """
@@ -85,8 +87,17 @@ def compute_peak_stats(
         area = p.area * dt * df
         volume = float(vals.sum()) * dt * df
         height = float(vals.max() - vals.min())
-        # Peakiness = Area * Height / Volume. NaN/inf if volume == 0.
-        peakiness = (area * height / volume) if volume != 0.0 else float("nan")
+        # Peakiness = log10(Area * Height / Volume). Degenerate cases:
+        #   volume == 0      → ratio is +∞ or NaN; mark NaN.
+        #   height == 0      → ratio is 0; log10(0) = -∞ (kept as sentinel).
+        #   ratio negative   → shouldn't happen on positive spectrograms; NaN.
+        if volume == 0.0:
+            peakiness = float("nan")
+        else:
+            ratio = area * height / volume
+            peakiness = math.log10(ratio) if ratio > 0.0 else (
+                float("-inf") if ratio == 0.0 else float("nan")
+            )
 
         rows.append({
             "Label": p.label,
