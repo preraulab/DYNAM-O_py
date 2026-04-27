@@ -20,7 +20,7 @@ import math
 
 import numpy as np
 import pandas as pd
-from skimage.measure import regionprops
+from skimage.measure import find_contours, regionprops
 
 
 def compute_peak_stats(
@@ -36,6 +36,8 @@ def compute_peak_stats(
         PeakTime, PeakFrequency, Height, Area, Duration, Bandwidth, Volume,
         Peakiness (= log10(Area * Height / Volume)),
         BoundingBox (4-tuple: (time_tl, freq_tl, width_s, height_Hz)),
+        Boundaries (Nx2 ndarray: column 0 = time (s), column 1 = freq (Hz)),
+        HeightData (1D ndarray of per-pixel intensities inside the region),
         SegmentNum
     """
     labels = np.asarray(labels, dtype=np.int64)
@@ -57,7 +59,7 @@ def compute_peak_stats(
         return pd.DataFrame(
             columns=["PeakTime", "PeakFrequency", "Height", "Area",
                      "Duration", "Bandwidth", "Volume", "Peakiness",
-                     "BoundingBox", "SegmentNum"]
+                     "BoundingBox", "Boundaries", "HeightData", "SegmentNum"]
         )
 
     # Treat NaN pixels as out-of-region. MATLAB does this explicitly.
@@ -84,9 +86,27 @@ def compute_peak_stats(
         peak_freq = wc_r * df + seg_starty
 
         vals = p.image_intensity[p.image]
+        height_data = np.ascontiguousarray(vals, dtype=np.float64)
         area = p.area * dt * df
         volume = float(vals.sum()) * dt * df
         height = float(vals.max() - vals.min())
+
+        # Boundaries: trace the perimeter of this region's mask and convert
+        # (row, col) pixel coords to (time, freq) world coords. Pad with a
+        # 1-px zero border so find_contours has a level crossing even when
+        # the cropped mask is fully filled, then offset by -1 to undo the pad.
+        padded = np.pad(p.image.astype(np.float64), 1)
+        contours_pix = find_contours(padded, 0.5)
+        if contours_pix:
+            pieces = []
+            for cnt in contours_pix:
+                rr = cnt[:, 0] - 1 + r0
+                cc = cnt[:, 1] - 1 + c0
+                pieces.append(np.column_stack([cc * dt + seg_startx,
+                                               rr * df + seg_starty]))
+            boundaries = np.vstack(pieces)
+        else:
+            boundaries = np.empty((0, 2), dtype=np.float64)
         # Peakiness = log10(Area * Height / Volume). Degenerate cases:
         #   volume == 0      → ratio is +∞ or NaN; mark NaN.
         #   height == 0      → ratio is 0; log10(0) = -∞ (kept as sentinel).
@@ -110,6 +130,8 @@ def compute_peak_stats(
             "Volume": volume,
             "Peakiness": peakiness,
             "BoundingBox": (bb_time, bb_freq, bb_w, bb_h),
+            "Boundaries": boundaries,
+            "HeightData": height_data,
             "SegmentNum": int(segment_num),
         })
 
