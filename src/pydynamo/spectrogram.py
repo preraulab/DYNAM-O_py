@@ -4,7 +4,7 @@ Rather than reimplement the wrapper around multitaper_rs, we import the
 canonical Prerau-lab `multitaper_spectrogram` function already vetted for
 MATLAB equivalence. It lives as a submodule of DYNAM-O at
 
-    ../DYNAM-O_dev/toolbox/helper_functions/multitaper_spectrogram/python/
+    ../DYNAM-O_dev/toolbox/helper_functions/multitaper_toolbox/python/
 
 and internally dispatches to the Rust kernel (multitaper_rs) when available.
 
@@ -25,7 +25,7 @@ import numpy as np
 _SUBMODULE_PATH = (
     Path(__file__).resolve().parents[3]
     / "DYNAM-O_dev" / "toolbox" / "helper_functions"
-    / "multitaper_spectrogram" / "python"
+    / "multitaper_toolbox" / "python"
 )
 if str(_SUBMODULE_PATH) not in sys.path:
     sys.path.insert(0, str(_SUBMODULE_PATH))
