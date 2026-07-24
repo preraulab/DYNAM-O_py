@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import time as _time
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 import numpy as np
@@ -36,6 +36,9 @@ def _timer(store: dict, key: str):
 
 from pydynamo.artifacts import detect_artifacts
 from pydynamo.baseline import compute_baseline, subtract_baseline
+from pydynamo.defaults import (
+    BaselineOpts, DetectionOpts, SOPHOpts, derived_peak_filters,
+)
 from pydynamo.soph.histogram import so_power_histogram, so_phase_histogram
 from pydynamo.soph.sophase import compute_so_phase
 from pydynamo.soph.sopower import compute_so_power
@@ -80,22 +83,55 @@ def run_dynamo(
     stage_times: np.ndarray,
     stage_vals: np.ndarray,
     *,
+    detection_opts: DetectionOpts | None = None,
+    baseline_opts: BaselineOpts | None = None,
+    soph_opts: SOPHOpts | None = None,
     time_range: tuple[float, float] | None = None,
-    merge_thresh: float = 11.0,    # MATLAB detection_opts.m 'default' preset
-    trim_vol: float = 0.8,
-    seg_time: float = 30.0,
-    soph_stages: tuple[int, ...] = (1, 2, 3),
-    min_time_in_bin: float = 10.0,   # MATLAB SOpowerphasehist_opts default (runExampleData.m:72 overrides to 5 for segment only)
-    min_peak_at_freq: int = 0,       # MATLAB SOpowerphasehist_opts default (runExampleData.m:73 overrides to 10 for segment only)
-    double_watershed: bool = True,
-    refinement: bool = True,
     plot: bool = True,
     verbose: bool = True,
+    # Scalar overrides, kept for backward compatibility. Each is applied on
+    # top of the corresponding option object when it is not None.
+    merge_thresh: float | None = None,
+    trim_vol: float | None = None,
+    seg_time: float | None = None,
+    soph_stages: tuple[int, ...] | None = None,
+    min_time_in_bin: float | None = None,
+    min_peak_at_freq: int | None = None,
+    double_watershed: bool | None = None,
+    refinement: bool | None = None,
 ) -> DynamoOutput:
     """Run the pydynamo pipeline.
 
     Stage convention (DYNAM-O): 1=N3, 2=N2, 3=N1, 4=REM, 5=Wake.
+
+    Options mirror the MATLAB `runDYNAMO` option structs: pass `DetectionOpts`,
+    `BaselineOpts`, and `SOPHOpts` instances to change any stage parameter. The
+    scalar keyword arguments are shorthand for the most commonly tuned fields
+    and override whatever the option objects carry.
     """
+    det = detection_opts if detection_opts is not None else DetectionOpts()
+    base = baseline_opts if baseline_opts is not None else BaselineOpts()
+    soph = soph_opts if soph_opts is not None else SOPHOpts()
+
+    if merge_thresh is not None:
+        det = replace(det, merge_thresh=merge_thresh)
+    if trim_vol is not None:
+        det = replace(det, trim_vol=trim_vol)
+    if seg_time is not None:
+        det = replace(det, seg_time=seg_time)
+    if double_watershed is not None:
+        det = replace(det, double_watershed=double_watershed)
+    if refinement is not None:
+        det = replace(det, refinement=refinement)
+    if soph_stages is not None:
+        soph = replace(soph, SOPH_stages=tuple(soph_stages))
+    if min_time_in_bin is not None:
+        soph = replace(soph, SOpower_min_time_in_bin=min_time_in_bin)
+    if min_peak_at_freq is not None:
+        soph = replace(soph, SOphase_min_peak_at_freq=min_peak_at_freq)
+
+    pk = derived_peak_filters(det)
+
     data = np.ascontiguousarray(np.asarray(data, dtype=np.float64).ravel())
     fs = float(fs)
     stage_times = np.asarray(stage_times, dtype=float).ravel()
@@ -125,7 +161,7 @@ def run_dynamo(
         stage_times, stage_vals, kind="previous",
         bounds_error=False, fill_value=0.0,
     )(t_tr)
-    stage_exclude = ~np.isin(stage_at_data, (1, 2, 3, 4, 5))
+    stage_exclude = ~np.isin(stage_at_data, base.baseline_stages)
     baseline_exclude = artifacts | stage_exclude
 
     # ---- Pass 1: 1 s window ----
@@ -133,40 +169,50 @@ def run_dynamo(
     with _timer(timings, "spect_pass1"):
         spect1, stimes1_rel, sfreqs = mtm_spectrogram(
             data_tr, fs,
-            freq_range=(0.0, 30.0), taper_params=(2, 3),
-            window_params=(1.0, 0.05), dsfreqs=0.1,
+            freq_range=det.mtm_freq_range, taper_params=det.mtm_taper_params,
+            window_params=(det.mtm_window_length_1, det.mtm_window_stepsize),
+            dsfreqs=det.mtm_dsfreqs,
         )
     stimes1 = stimes1_rel + t_tr[0]
     with _timer(timings, "baseline_pass1"):
         baseline1 = compute_baseline(spect1, stimes1, t_tr, baseline_exclude,
-                                      baseline_ptile=2.0)
+                                      baseline_ptile=base.baseline_ptile)
         spect1_norm = subtract_baseline(spect1, baseline1)
 
     if verbose: print("[dynamo] pass-1 extract...")
     with _timer(timings, "extract_pass1"):
         stats1, labels1 = extract_tfpeaks(
             spect1_norm, stimes1, sfreqs,
-            seg_time=seg_time, return_labels=True,
-            downsample=(2, 2), merge_thresh=merge_thresh, trim_vol=trim_vol,
-            dur_min=0.5, dur_max=5.0, bw_min=2.0, bw_max=15.0,
+            seg_time=det.seg_time, return_labels=True,
+            num_tapers_for_prom=int(det.mtm_taper_params[1]),
+            downsample=det.downsample_spect, merge_thresh=det.merge_thresh,
+            max_merges=det.max_merges, trim_vol=det.trim_vol,
+            dur_min=pk["dur_min"], dur_max=det.dur_max,
+            bw_min=pk["bw_min_pass1"], bw_max=det.bw_max,
         )
     if verbose: print(f"[dynamo]   pass-1: {len(stats1)} peaks")
 
     # ---- Pass 2 (optional): 2 s window, masked by pass-1 regions ----
-    if double_watershed and not stats1.empty:
+    if det.double_watershed and not stats1.empty:
         if verbose: print("[dynamo] pass-2 spectrogram (2 s window)...")
         with _timer(timings, "spect_pass2"):
             spect2, stimes2_rel, sfreqs2 = mtm_spectrogram(
                 data_tr, fs,
-                freq_range=(0.0, 30.0), taper_params=(2, 3),
-                window_params=(2.0, 0.05), dsfreqs=0.1,
+                freq_range=det.mtm_freq_range, taper_params=det.mtm_taper_params,
+                window_params=(det.mtm_window_length_2, det.mtm_window_stepsize),
+                dsfreqs=det.mtm_dsfreqs,
             )
         stimes2 = stimes2_rel + t_tr[0]
         assert sfreqs2.shape == sfreqs.shape, \
             "pass-1/pass-2 sfreqs differ (nfft mismatch)"
         with _timer(timings, "baseline_pass2"):
-            baseline2 = compute_baseline(spect2, stimes2, t_tr, baseline_exclude,
-                                          baseline_ptile=2.0)
+            # computeTFPeaks.m: with reuse_baseline (the default) pass 2 keeps
+            # the pass-1 baseline rather than recomputing one from the pass-2
+            # spectrogram.
+            baseline2 = (baseline1 if det.reuse_baseline else
+                         compute_baseline(spect2, stimes2, t_tr,
+                                          baseline_exclude,
+                                          baseline_ptile=base.baseline_ptile))
             spect2_norm = subtract_baseline(spect2, baseline2)
             if verbose: print("[dynamo] masking pass-2 spect with pass-1 regions...")
             spect2_masked = mask_spectrogram(spect2_norm, stimes2, labels1, stimes1)
@@ -178,9 +224,12 @@ def run_dynamo(
         with _timer(timings, "extract_pass2"):
             stats = extract_tfpeaks(
                 spect2_masked, stimes2, sfreqs2,
-                seg_time=seg_time,
-                downsample=(2, 2), merge_thresh=merge_thresh, trim_vol=trim_vol,
-                dur_min=0.5, dur_max=5.0, bw_min=1.0, bw_max=15.0,
+                seg_time=det.seg_time,
+                num_tapers_for_prom=int(det.mtm_taper_params[1]),
+                downsample=det.downsample_spect, merge_thresh=det.merge_thresh,
+                max_merges=det.max_merges, trim_vol=det.trim_vol,
+                dur_min=pk["dur_min"], dur_max=det.dur_max,
+                bw_min=pk["bw_min_pass2"], bw_max=det.bw_max,
             )
         spect_for_plot = spect2
         stimes_for_plot = stimes2
@@ -191,13 +240,16 @@ def run_dynamo(
         stimes_for_plot = stimes1
 
     # ---- Hann refinement ----
-    if refinement and not stats.empty:
+    if det.refinement and not stats.empty:
         if verbose: print("[dynamo] Hann frequency refinement...")
         with _timer(timings, "refine"):
             stats = refine_peak_frequency(
                 stats, data_tr, fs, t=t_tr,
-                freq_range=(0.0, 30.0), window_size=4.0, dsfreqs=0.05,
-                refine_method="spline_interp", remove_edge_peaks=True,
+                freq_range=det.mtm_freq_range,
+                window_size=det.refine_window_size,
+                dsfreqs=det.refine_dsfreqs,
+                refine_method=det.refine_method,
+                remove_edge_peaks=det.refine_remove_edge_peaks,
             )
         if verbose: print(f"[dynamo]   after refinement: {len(stats)} peaks")
 
@@ -223,14 +275,30 @@ def run_dynamo(
             stage_times=stage_times, stage_vals=stage_vals,
             eeg_times=t_tr, time_range=time_range,
             isexcluded=artifacts,
-            SO_freqrange=(0.3, 1.5), tapers=(5, 9), window_params=(5.0, 0.5),
-            SOpower_outlier_threshold=3.0, norm_method="p2shift1234",
-            retain_Fs=True,
+            SO_freqrange=soph.SO_freqrange, tapers=soph.SOpower_tapers,
+            window_params=soph.SOpower_window_params,
+            SOpower_outlier_threshold=soph.SOpower_outlier_threshold,
+            norm_method=soph.SOpower_norm_method,
+            retain_Fs=soph.SOpower_retain_Fs,
         )
         if not stats.empty:
-            xp = np.concatenate(([SOpower_times[0] - 1], SOpower_times,
-                                 [SOpower_times[-1] + 1]))
-            fp = np.concatenate(([SOpower_norm[0]], SOpower_norm, [SOpower_norm[-1]]))
+            peak_pow, peak_t = SOpower_norm, SOpower_times
+            if not soph.SOpower_peak_shift_uses_stages:
+                # Reproduce computePeakSOpower.m, which omits the stages and so
+                # normalizes against every in-range sample rather than the
+                # stages named in the norm method. See the field's docstring.
+                peak_pow, peak_t, _, _, _ = compute_so_power(
+                    data_tr, fs, eeg_times=t_tr, time_range=time_range,
+                    isexcluded=artifacts,
+                    SO_freqrange=soph.SO_freqrange,
+                    tapers=soph.SOpower_tapers,
+                    window_params=soph.SOpower_window_params,
+                    SOpower_outlier_threshold=soph.SOpower_outlier_threshold,
+                    norm_method=soph.SOpower_norm_method,
+                    retain_Fs=soph.SOpower_retain_Fs,
+                )
+            xp = np.concatenate(([peak_t[0] - 1], peak_t, [peak_t[-1] + 1]))
+            fp = np.concatenate(([peak_pow[0]], peak_pow, [peak_pow[-1]]))
             stats["SOpower"] = np.interp(stats["PeakTime"].to_numpy(), xp, fp)
 
     if verbose: print("[dynamo] SO-phase...")
@@ -239,7 +307,7 @@ def run_dynamo(
             data_tr, fs,
             stage_times=stage_times, stage_vals=stage_vals,
             eeg_times=t_tr, isexcluded=artifacts,
-            SO_freqrange=(0.3, 1.5),
+            SO_freqrange=soph.SO_freqrange,
         )
         if not stats.empty:
             peak_phase_unwrapped = np.interp(
@@ -255,21 +323,23 @@ def run_dynamo(
     with _timer(timings, "soph_sopower_hist"):
         sopow = so_power_histogram(
             pf, pt, ps, SOpower_norm, SOpower_times, SOpower_stages,
-            time_range=time_range, soph_stages=soph_stages,
-            freq_range=(0.0, 30.0), freq_binsizestep=(1.0, 0.2),
-            so_range=None, so_binsizestep=None,
-            min_time_in_bin=min_time_in_bin, compute_rate=True, norm_dim=0,
+            time_range=time_range, soph_stages=soph.SOPH_stages,
+            freq_range=soph.freq_range, freq_binsizestep=soph.freq_binsizestep,
+            so_range=soph.SOpower_range, so_binsizestep=soph.SOpower_binsizestep,
+            min_time_in_bin=soph.SOpower_min_time_in_bin,
+            compute_rate=soph.compute_rate, norm_dim=0,
         )
 
     if verbose: print("[dynamo] SO-phase histogram...")
     with _timer(timings, "soph_sophase_hist"):
         sopha = so_phase_histogram(
             pf, pt, ps, SOphase_unwrapped, SOphase_times, SOphase_stages,
-            time_range=time_range, soph_stages=soph_stages,
-            freq_range=(0.0, 30.0), freq_binsizestep=(1.0, 0.2),
-            so_range=(-np.pi, np.pi),
-            so_binsizestep=(2 * np.pi / 5, 2 * np.pi / 100),
-            min_peak_at_freq=min_peak_at_freq, compute_rate=True, norm_dim=1,
+            time_range=time_range, soph_stages=soph.SOPH_stages,
+            freq_range=soph.freq_range, freq_binsizestep=soph.freq_binsizestep,
+            so_range=soph.SOphase_range,
+            so_binsizestep=soph.SOphase_binsizestep,
+            min_peak_at_freq=soph.SOphase_min_peak_at_freq,
+            compute_rate=soph.compute_rate, norm_dim=soph.SOphase_norm_dim,
         )
 
     # NREM-included peaks (SOPH_stages filter — matches MATLAB's hist_peakidx).

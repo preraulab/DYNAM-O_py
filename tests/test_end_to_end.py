@@ -10,10 +10,27 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from pydynamo import run_dynamo
+from pydynamo import SOPHOpts, run_dynamo
+from pydynamo.soph.histogram import create_bins
 
 
 SEGMENT_TIME_RANGE = (8420, 13446)
+
+
+def _expected_soph_shape(opts: SOPHOpts, which: str) -> tuple[int, int]:
+    """(n_c_bins, n_freq_bins) implied by `opts`, using MATLAB's bin methods.
+
+    TFPeakHistogram.m:135-141 uses 'partial' for the frequency axis, 'extend'
+    for a circular C axis (SO-phase) and 'partial' otherwise (SO-power).
+    """
+    _, freq_cbins = create_bins(opts.freq_range, *opts.freq_binsizestep, "partial")
+    if which == "phase":
+        _, c_cbins = create_bins(opts.SOphase_range, *opts.SOphase_binsizestep,
+                                 "extend")
+    else:
+        _, c_cbins = create_bins(opts.SOpower_range, *opts.SOpower_binsizestep,
+                                 "partial")
+    return c_cbins.size, freq_cbins.size
 
 
 def test_end_to_end_segment(example_data, tmp_path):
@@ -30,14 +47,28 @@ def test_end_to_end_segment(example_data, tmp_path):
         verbose=False,
     )
 
-    # Outputs
+    # Outputs. Shapes are derived from the default SOPHOpts rather than
+    # hardcoded, so a deliberate change to a MATLAB-matched default updates the
+    # expectation with it instead of failing here.
+    opts = SOPHOpts()
+    pow_shape = _expected_soph_shape(opts, "power")
+    pha_shape = _expected_soph_shape(opts, "phase")
+
     assert out.stats_table is not None
-    assert out.SOPHs.SOpower_mat.shape == (101, 151) or \
-           out.SOPHs.SOpower_mat.shape[1] == 151, \
-           f"unexpected SOpower_mat shape {out.SOPHs.SOpower_mat.shape}"
-    assert out.SOPHs.SOphase_mat.shape[1] == 151
-    assert out.SOPHs.SOphase_bins.size == 101
-    assert out.SOPHs.freq_bins.size == 151
+    assert out.SOPHs.SOpower_mat.shape == pow_shape, \
+        f"unexpected SOpower_mat shape {out.SOPHs.SOpower_mat.shape}, want {pow_shape}"
+    assert out.SOPHs.SOphase_mat.shape == pha_shape, \
+        f"unexpected SOphase_mat shape {out.SOPHs.SOphase_mat.shape}, want {pha_shape}"
+    assert out.SOPHs.SOpower_bins.size == pow_shape[0]
+    assert out.SOPHs.SOphase_bins.size == pha_shape[0]
+    assert out.SOPHs.freq_bins.size == pow_shape[1]
+
+    # The frequency axis is the SOPH histogram range (2-18 Hz by default), not
+    # the spectrogram's 0-30 Hz range. Bin centers accumulate step-sized
+    # floating-point error, so compare with a tolerance well under one step.
+    tol = 0.01 * opts.freq_binsizestep[1]
+    assert out.SOPHs.freq_bins.min() >= opts.freq_range[0] - tol
+    assert out.SOPHs.freq_bins.max() <= opts.freq_range[1] + tol
 
     # Peak count — MATLAB has 5738 in this segment; ours will differ but
     # should be in a reasonable range.
