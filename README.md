@@ -93,17 +93,23 @@ Stage-by-stage verification:
 git clone git@github.com:preraulab/DYNAM-O_py.git
 cd DYNAM-O_py
 
-# (recommended) fresh virtualenv
+# (recommended) fresh virtualenv. On Apple Silicon make sure this is a native
+# arm64 interpreter — an x86_64 Python builds x86_64 wheels that run under
+# Rosetta, which costs several-fold on exactly the kernels dynamo_rs exists to
+# speed up. Check with: python -c "import platform; print(platform.machine())"
 python -m venv .venv && source .venv/bin/activate
 pip install --upgrade pip maturin
 
-# Build + install the Rust merge / trim / watershed extension (dynamo_rs)
-maturin develop --release -m rust/pyproject.toml
+# Build + install the Rust kernel (dynamo_rs). It lives in the sibling
+# DYNAM-O_rs repo; the `python` feature enables the PyO3 bindings. Skip the
+# clone if you already have the DYNAM-O_toolbox meta-repo layout.
+[ -d ../DYNAM-O_rs ] || git clone git@github.com:preraulab/DYNAM-O_rs.git ../DYNAM-O_rs
+maturin develop --release --features python -m ../DYNAM-O_rs/rust/Cargo.toml
 
-# Build + install the multitaper spectrogram Rust extension (multitaper_rs)
-# from its own repo — it's a sibling dependency, not on PyPI yet:
-git clone git@github.com:preraulab/multitaper_toolbox.git
-maturin develop --release -m multitaper_toolbox/src/python/rust/pyproject.toml
+# Build + install the multitaper spectrogram Rust extension (multitaper_rs).
+# It ships as a submodule of DYNAM-O_dev:
+maturin develop --release \
+    -m ../DYNAM-O_dev/toolbox/helper_functions/multitaper_toolbox/rust/Cargo.toml
 
 # Install the Python package
 pip install -e .
