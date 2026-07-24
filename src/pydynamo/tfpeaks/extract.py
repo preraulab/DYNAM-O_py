@@ -220,7 +220,7 @@ def extract_tfpeaks_segment(
     props = pd.DataFrame(
         measure.regionprops_table(
             trim_labels, spect,
-            properties=("label", "centroid_weighted", "bbox",
+            properties=("label", "centroid_weighted", "bbox", "area",
                         "intensity_min", "intensity_max"),
         )
     )
@@ -255,10 +255,22 @@ def extract_tfpeaks_segment(
     props["Height"] = props["intensity_max"] - props["intensity_min"]
     props["SegmentNum"] = int(segment_num)
 
+    # Area: pixel count * dt * df, in sec*Hz (computePeakStatsTable.m:128)
+    props["Area"] = props["area"].to_numpy() * d_time * d_freq
+
     # Volume: sum(spect at label pixels) * dt * df
     def _vol(lab):
         return float(spect[trim_labels == lab].sum()) * d_time * d_freq
     props["Volume"] = [_vol(int(lab)) for lab in props["label"]]
+
+    # Peakiness in dB: 10*log10(Area * Height / Volume)
+    # (computePeakStatsTable.m:206, and dynamo_rs extract_pipeline.rs:487).
+    # Volume == 0 or a non-positive ratio leaves the ratio undefined, so emit
+    # NaN there rather than letting log10 raise or return -inf.
+    with np.errstate(divide="ignore", invalid="ignore"):
+        ratio = props["Area"].to_numpy() * props["Height"].to_numpy() / \
+            props["Volume"].to_numpy()
+        props["Peakiness"] = np.where(ratio > 0.0, 10.0 * np.log10(ratio), np.nan)
 
     # MATLAB extractTFPeaks.m:304/336/355 filter uses
     #   (max(x) - min(x)) * dt > dur_min
@@ -278,13 +290,96 @@ def extract_tfpeaks_segment(
 
     # Drop regionprops raw columns we no longer need
     for c in ["centroid_weighted-0", "centroid_weighted-1",
-              "bbox-0", "bbox-1", "bbox-2", "bbox-3",
+              "bbox-0", "bbox-1", "bbox-2", "bbox-3", "area",
               "intensity_min", "intensity_max", "Prominence_dB"]:
         if c in props.columns:
             del props[c]
     if return_labels:
         return props, trim_labels
     return props
+
+
+_HAS_FUSED = _HAS_RUST_WS and hasattr(_dynamo_rs, "extract_tfpeaks")
+
+# Columns the fused Rust kernel returns → pydynamo stats_table names.
+_FUSED_COLS = {
+    "peak_time": "PeakTime", "peak_freq": "PeakFrequency",
+    "duration": "Duration", "bandwidth": "Bandwidth", "height": "Height",
+    "volume": "Volume", "segment_num": "SegmentNum", "area": "Area",
+    "peakiness": "Peakiness",
+}
+
+
+def extract_tfpeaks_fused(
+    spect: np.ndarray,
+    stimes: np.ndarray,
+    sfreqs: np.ndarray,
+    seg_time: float = 30.0,
+    return_labels: bool = False,
+    downsample: Tuple[int, int] = (2, 2),
+    merge_thresh: float = 11.0,
+    max_merges: float = float("inf"),
+    trim_vol: float = 0.8,
+    dur_min: float = 0.5,
+    dur_max: float = 5.0,
+    bw_min: float = 2.0,
+    bw_max: float = 15.0,
+    prom_min: float | None = None,
+    num_tapers_for_prom: int = 3,
+    **_ignored,
+) -> pd.DataFrame | Tuple[pd.DataFrame, np.ndarray]:
+    """Whole-spectrogram extraction via the fused `dynamo_rs.extract_tfpeaks`.
+
+    This is the same kernel the MATLAB rust backend calls, so Python and
+    MATLAB run identical extraction code instead of Python re-assembling
+    watershed / merge / paint / trim itself.
+
+    Filter split follows runSegmentedData.m:169-175: only `dur_min`/`bw_min`
+    go into Rust, with the max/height caps deliberately left unbounded there
+    and applied here afterwards. That split matters — MATLAB masks the pass-2
+    spectrogram with the *unfiltered* pass-1 label image, so applying the caps
+    inside Rust would shrink the mask and cost pass-2 peaks.
+    """
+    if prom_min is None:
+        prom_min = min_prominence(num_tapers_for_prom, 0.95)
+
+    res = _dynamo_rs.extract_tfpeaks(
+        np.ascontiguousarray(spect, dtype=np.float64),
+        np.ascontiguousarray(stimes, dtype=np.float64),
+        np.ascontiguousarray(sfreqs, dtype=np.float64),
+        None,                       # baseline already divided out upstream
+        float(seg_time),
+        int(downsample[0]), int(downsample[1]),
+        float(merge_thresh), float(max_merges), float(trim_vol),
+        float("nan"),               # trim_shift_val: per-segment min(spect)
+        float(dur_min), float("inf"),   # dur_max capped below, not in Rust
+        float(bw_min), float("inf"),    # bw_max  capped below, not in Rust
+        float("-inf"), float("inf"),    # freq cuts: MATLAB passes [-inf inf]
+        float("-inf"),                  # ht_db_min capped below, not in Rust
+        0,                          # expand_labels_distance: MATLAB paint
+        False, False,               # height_data / boundaries: not needed
+    )
+
+    df = pd.DataFrame({dst: np.asarray(res[src]).ravel()
+                       for src, dst in _FUSED_COLS.items()})
+    bbox = np.asarray(res["bbox"], dtype=float).reshape(-1, 4)
+    df["BoundingBox"] = [tuple(r) for r in bbox]
+    df.insert(0, "label", np.arange(1, len(df) + 1, dtype=np.int64))
+
+    labels = np.asarray(res["labels"], dtype=np.int64)
+
+    # filterStatsTable.m: strict inequalities, height compared in dB.
+    if len(df):
+        with np.errstate(divide="ignore", invalid="ignore"):
+            height_db = _pow2db(df["Height"].to_numpy())
+        keep = ((df["Duration"].to_numpy() < dur_max)
+                & (df["Bandwidth"].to_numpy() < bw_max)
+                & (np.isnan(height_db) | (height_db > prom_min)))
+        df = df[keep].reset_index(drop=True)
+
+    if return_labels:
+        return df, labels
+    return df
 
 
 def extract_tfpeaks(
@@ -294,6 +389,7 @@ def extract_tfpeaks(
     seg_time: float = 30.0,
     n_jobs: int = -1,
     return_labels: bool = False,
+    use_fused: bool | None = None,
     **segment_kwargs,
 ) -> pd.DataFrame | Tuple[pd.DataFrame, np.ndarray]:
     """Split the spectrogram into `seg_time`-second segments and extract
@@ -301,7 +397,25 @@ def extract_tfpeaks(
 
     When `return_labels=True`, also returns a stitched (F, T) label image
     covering the full spectrogram (each peak carries a unique int label).
+
+    `use_fused` selects the single-call Rust kernel (the same one the MATLAB
+    rust backend uses) instead of assembling the stages in Python. None means
+    use it when available, which is both faster and closer to MATLAB; set
+    False to force the Python assembly.
     """
+    if use_fused is None:
+        use_fused = _HAS_FUSED
+    if use_fused:
+        if not _HAS_FUSED:
+            raise RuntimeError(
+                "use_fused=True but this dynamo_rs build has no "
+                "extract_tfpeaks; rebuild with --features python"
+            )
+        return extract_tfpeaks_fused(
+            spect, stimes, sfreqs, seg_time=seg_time,
+            return_labels=return_labels, **segment_kwargs,
+        )
+
     dt = float(stimes[1] - stimes[0])
     F, T = spect.shape
 
