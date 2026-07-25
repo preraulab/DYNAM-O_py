@@ -48,6 +48,73 @@ from pydynamo.tfpeaks.mask import mask_spectrogram
 from pydynamo.tfpeaks.refine import refine_peak_frequency
 
 
+def _crop_baseline_exclude(
+    baseline_exclude, *, data_size: int, time_slice: slice,
+) -> np.ndarray:
+    """Validate and align an explicit exclusion mask to the cropped data."""
+    values = np.asarray(baseline_exclude)
+    crop_start, crop_stop, crop_step = time_slice.indices(data_size)
+    cropped_size = len(range(crop_start, crop_stop, crop_step))
+
+    if values.size == 0:
+        return np.zeros(cropped_size, dtype=bool)
+
+    values = values.ravel()
+    is_binary_numeric = (
+        np.issubdtype(values.dtype, np.number)
+        and np.all(np.isin(values, (0, 1)))
+    )
+    if values.dtype.kind != "b" and not is_binary_numeric:
+        raise ValueError("baseline_exclude must be boolean or binary numeric")
+
+    if values.size == data_size:
+        values = values[time_slice]
+    elif values.size != cropped_size:
+        raise ValueError(
+            "baseline_exclude must be empty, the full data length "
+            f"({data_size}), or the cropped time_range length ({cropped_size})"
+        )
+
+    return values.astype(bool, copy=False)
+
+
+def _resolve_baseline_range(
+    baseline_trim, *, stage_times: np.ndarray, stage_vals: np.ndarray,
+) -> tuple[float, float]:
+    """Resolve MATLAB baseline_trim to an absolute range in seconds.
+
+    A scalar is a symmetric buffer in minutes around the first and last
+    non-wake (stages 1--4) staging times, clipped at zero and the final
+    staging time.
+    """
+    values = np.asarray(baseline_trim)
+    if values.size == 0:
+        return (float("-inf"), float("inf"))
+    if not np.issubdtype(values.dtype, np.number) or values.dtype.kind == "b":
+        raise ValueError("baseline_trim must be numeric")
+
+    values = values.astype(float, copy=False).ravel()
+    if values.size == 1:
+        nonwake_times = stage_times[np.isin(stage_vals, (1, 2, 3, 4))]
+        if nonwake_times.size == 0:
+            raise ValueError(
+                "scalar baseline_trim requires at least one non-wake stage"
+            )
+        buffer_seconds = values[0] * 60.0
+        return (
+            float(max(nonwake_times.min() - buffer_seconds, 0.0)),
+            float(min(
+                nonwake_times.max() + buffer_seconds,
+                stage_times.max(),
+            )),
+        )
+    if values.size == 2:
+        return (float(values[0]), float(values[1]))
+    raise ValueError(
+        "baseline_trim must contain zero, one, or two numeric values"
+    )
+
+
 @dataclass
 class SOPHsResult:
     SOpower_mat: np.ndarray
@@ -142,8 +209,15 @@ def run_dynamo(
 
     i0 = int(round(time_range[0] * fs))
     i1 = int(round(time_range[1] * fs))
-    data_tr = data[i0 : i1 + 1]
+    time_slice = slice(i0, i1 + 1)
+    data_tr = data[time_slice]
     t_tr = np.arange(i0, i1 + 1) / fs
+    explicit_baseline_exclude = _crop_baseline_exclude(
+        base.baseline_exclude, data_size=data.size, time_slice=time_slice,
+    )
+    baseline_range = _resolve_baseline_range(
+        base.baseline_trim, stage_times=stage_times, stage_vals=stage_vals,
+    )
 
     if verbose:
         print(f"[dynamo] {data_tr.size} samples ({data_tr.size/fs:.0f}s) at {fs} Hz")
@@ -162,7 +236,9 @@ def run_dynamo(
         bounds_error=False, fill_value=0.0,
     )(t_tr)
     stage_exclude = ~np.isin(stage_at_data, base.baseline_stages)
-    baseline_exclude = artifacts | stage_exclude
+    baseline_exclude = (
+        artifacts | stage_exclude | explicit_baseline_exclude
+    )
 
     # ---- Pass 1: 1 s window ----
     if verbose: print("[dynamo] pass-1 spectrogram (1 s window)...")
@@ -176,6 +252,7 @@ def run_dynamo(
     stimes1 = stimes1_rel + t_tr[0]
     with _timer(timings, "baseline_pass1"):
         baseline1 = compute_baseline(spect1, stimes1, t_tr, baseline_exclude,
+                                      baseline_range=baseline_range,
                                       baseline_ptile=base.baseline_ptile)
         spect1_norm = subtract_baseline(spect1, baseline1)
 
@@ -212,6 +289,7 @@ def run_dynamo(
             baseline2 = (baseline1 if det.reuse_baseline else
                          compute_baseline(spect2, stimes2, t_tr,
                                           baseline_exclude,
+                                          baseline_range=baseline_range,
                                           baseline_ptile=base.baseline_ptile))
             spect2_norm = subtract_baseline(spect2, baseline2)
             if verbose: print("[dynamo] masking pass-2 spect with pass-1 regions...")
