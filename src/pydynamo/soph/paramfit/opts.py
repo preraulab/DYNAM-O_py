@@ -67,7 +67,7 @@ class ParamBasisOpts:
     UB_default: tuple = (NAN, NAN, 2.5, NAN, 30.0, 0.03)
     LB_default: tuple = (NAN, NAN, 0.1, NAN, 2.5, -0.03)
     constrain_freq_center: bool = True
-    constrain_feature_center: bool = True
+    _constrain_feature_center: bool = True
 
     # LM iteration cap handed to the Rust kernel; 0 selects its default of
     # 100 * n_params, which is what scipy least_squares uses.
@@ -76,9 +76,54 @@ class ParamBasisOpts:
     verbose: bool = False
     peak_assign_prob: float = 0.95
 
+    def __post_init__(self):
+        feature_name = (
+            "constrain_power_center" if self.kind == "power"
+            else "constrain_phase_center"
+        )
+        flags = {
+            "constrain_freq_center": self.constrain_freq_center,
+            feature_name: self._constrain_feature_center,
+        }
+        for name, value in flags.items():
+            is_bool = isinstance(value, (bool, np.bool_))
+            is_binary_number = (
+                isinstance(value, (int, float, np.integer, np.floating))
+                and np.isfinite(value)
+                and value in (0, 1)
+            )
+            if not (is_bool or is_binary_number):
+                raise ValueError(f"{name} must be a binary scalar")
+
+    @property
+    def constrain_power_center(self):
+        if self.kind != "power":
+            raise AttributeError(
+                "constrain_power_center is only valid for power options"
+            )
+        return self._constrain_feature_center
+
+    @property
+    def constrain_phase_center(self):
+        if self.kind != "phase":
+            raise AttributeError(
+                "constrain_phase_center is only valid for phase options"
+            )
+        return self._constrain_feature_center
+
     @staticmethod
     def power(**overrides) -> "ParamBasisOpts":
         """Defaults for the SO-power fit (param_basis_opts.m:97-122)."""
+        if "constrain_phase_center" in overrides:
+            raise TypeError(
+                "constrain_phase_center is only valid for phase options"
+            )
+        if "_constrain_feature_center" in overrides:
+            raise TypeError("use constrain_power_center")
+        if "constrain_power_center" in overrides:
+            overrides["_constrain_feature_center"] = overrides.pop(
+                "constrain_power_center"
+            )
         return replace(ParamBasisOpts(), **overrides)
 
     @staticmethod
@@ -89,6 +134,16 @@ class ParamBasisOpts:
         in MATLAB, and residual_max_seed.m documents 0 as the phase-axis
         convention that disables the exclusion mask.
         """
+        if "constrain_power_center" in overrides:
+            raise TypeError(
+                "constrain_power_center is only valid for power options"
+            )
+        if "_constrain_feature_center" in overrides:
+            raise TypeError("use constrain_phase_center")
+        if "constrain_phase_center" in overrides:
+            overrides["_constrain_feature_center"] = overrides.pop(
+                "constrain_phase_center"
+            )
         base = ParamBasisOpts(
             kind="phase",
             feature_limits=(-pi, pi),
@@ -143,7 +198,11 @@ def resolve_bounds(
 
     if not opts.constrain_freq_center:
         ub[1], lb[1] = np.inf, -np.inf
-    if not opts.constrain_feature_center:
+    constrain_feature_center = (
+        opts.constrain_power_center if opts.kind == "power"
+        else opts.constrain_phase_center
+    )
+    if not constrain_feature_center:
         ub[3], lb[3] = np.inf, -np.inf
 
     return lb, ub
