@@ -73,13 +73,14 @@ def test_resolve_baseline_range_rejects_invalid_shape():
         )
 
 
-def test_scalar_baseline_trim_requires_nonwake_staging():
-    with pytest.raises(ValueError, match="non-wake"):
-        pipeline._resolve_baseline_range(
-            1.0,
-            stage_times=np.array([0.0, 30.0]),
-            stage_vals=np.array([5.0, 5.0]),
-        )
+def test_scalar_baseline_trim_without_nonwake_uses_staging_span():
+    result = pipeline._resolve_baseline_range(
+        1.0,
+        stage_times=np.array([0.0, 30.0]),
+        stage_vals=np.array([5.0, 5.0]),
+    )
+
+    assert result == (0.0, 30.0)
 
 
 def test_run_dynamo_passes_custom_baseline_options_to_both_passes(

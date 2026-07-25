@@ -85,7 +85,7 @@ def _resolve_baseline_range(
 
     A scalar is a symmetric buffer in minutes around the first and last
     non-wake (stages 1--4) staging times, clipped at zero and the final
-    staging time.
+    staging time. With no non-wake stages, MATLAB uses the full staging span.
     """
     values = np.asarray(baseline_trim)
     if values.size == 0:
@@ -97,9 +97,7 @@ def _resolve_baseline_range(
     if values.size == 1:
         nonwake_times = stage_times[np.isin(stage_vals, (1, 2, 3, 4))]
         if nonwake_times.size == 0:
-            raise ValueError(
-                "scalar baseline_trim requires at least one non-wake stage"
-            )
+            return (0.0, float(stage_times.max()))
         buffer_seconds = values[0] * 60.0
         return (
             float(max(nonwake_times.min() - buffer_seconds, 0.0)),
