@@ -8,7 +8,7 @@ SO-phase histograms, and a MATLAB-style summary figure.
 
 This repo is one of three coordinated implementations of DYNAM-O:
 
-- **[DYNAM-O](https://github.com/preraulab/DYNAM-O)** — authoritative MATLAB implementation. Source-of-truth algorithm, File Manager GUI, full statistical testing suite.
+- **[DYNAM-O_dev](https://github.com/preraulab/DYNAM-O_dev)** — authoritative MATLAB implementation. Source-of-truth algorithm, File Manager GUI, full statistical testing suite.
 - **[DYNAM-O_rs](https://github.com/preraulab/DYNAM-O_rs)** — shared pure-Rust kernel (`dynamo_rs`). The hot paths in both MATLAB (via MEX) and Python (via PyO3) delegate here.
 - **[DYNAM-O_toolbox](https://github.com/preraulab/DYNAM-O_toolbox)** — parent meta-repo pinning all three as git submodules.
 
@@ -77,6 +77,7 @@ Stage-by-stage verification:
 - **Rust toolchain** (`cargo`, `rustc`) — install via [rustup](https://rustup.rs/):
   ```bash
   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+  source "$HOME/.cargo/env"
   ```
 - **maturin** — builds the Rust extensions against CPython:
   ```bash
@@ -90,7 +91,19 @@ Stage-by-stage verification:
 ### Install
 
 ```bash
-git clone git@github.com:preraulab/DYNAM-O_py.git
+# Keep these three coordinated repositories beside one another. DYNAM-O_rs
+# resolves the multitaper Rust crate through this sibling layout, and pydynamo
+# imports the canonical Python wrapper from DYNAM-O_dev.
+mkdir DYNAM-O-stack && cd DYNAM-O-stack
+git clone --branch rust-bridge --single-branch \
+    git@github.com:preraulab/DYNAM-O_py.git DYNAM-O_py
+git clone --branch rust-bridge --single-branch \
+    git@github.com:preraulab/DYNAM-O_dev.git DYNAM-O_dev
+git -C DYNAM-O_dev submodule update --init \
+    toolbox/helper_functions/multitaper_toolbox
+git clone --branch rust-bridge --single-branch \
+    git@github.com:preraulab/DYNAM-O_rs.git DYNAM-O_rs
+
 cd DYNAM-O_py
 
 # (recommended) fresh virtualenv. On Apple Silicon make sure this is a native
@@ -98,24 +111,25 @@ cd DYNAM-O_py
 # Rosetta, which costs several-fold on exactly the kernels dynamo_rs exists to
 # speed up. Check with: python -c "import platform; print(platform.machine())"
 python -m venv .venv && source .venv/bin/activate
-pip install --upgrade pip maturin
+python -m pip install --upgrade pip maturin
 
-# Build + install the Rust kernel (dynamo_rs). It lives in the sibling
-# DYNAM-O_rs repo; the `python` feature enables the PyO3 bindings. Skip the
-# clone if you already have the DYNAM-O_toolbox meta-repo layout.
-[ -d ../DYNAM-O_rs ] || git clone git@github.com:preraulab/DYNAM-O_rs.git ../DYNAM-O_rs
-maturin develop --release --features python -m ../DYNAM-O_rs/rust/Cargo.toml
-
-# Build + install the multitaper spectrogram Rust extension (multitaper_rs).
-# It ships as a submodule of DYNAM-O_dev:
-maturin develop --release \
+# Build + install the multitaper extension first. DYNAM-O_rs consumes the same
+# local crate when it builds, while the DYNAM-O_dev Python wrapper imports this
+# standalone extension at runtime.
+python -m maturin develop --release \
     -m ../DYNAM-O_dev/toolbox/helper_functions/multitaper_toolbox/rust/Cargo.toml
 
-# Install the Python package
-pip install -e .
+# Build + install the DYNAM-O kernel from rust-bridge, where the current Python
+# pipeline and parametric-fit APIs live.
+python -m maturin develop --release --features python \
+    -m ../DYNAM-O_rs/rust/Cargo.toml
+
+# Install pydynamo and verify the sibling wrappers and native APIs.
+python -m pip install -e .
+python scripts/check_install.py
 
 # (optional) test dependencies
-pip install -e '.[test]'
+python -m pip install -e '.[test]'
 ```
 
 Python runtime deps (installed automatically by `pip install -e .`):
