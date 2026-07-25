@@ -10,12 +10,14 @@ Matches DYNAM-O_dev's computeTFPeaks flow:
   7. Hann-window 1 Hz frequency refinement per peak
   8. Assign per-peak Stage, SO-power, SO-phase
   9. SO-power + SO-phase histograms
- 10. Summary plot
+ 10. Parametric-basis fits
+ 11. Summary plot
 """
 
 from __future__ import annotations
 
 import time as _time
+import warnings
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from typing import Any
@@ -40,6 +42,11 @@ from pydynamo.defaults import (
     BaselineOpts, DetectionOpts, SOPHOpts, derived_peak_filters,
 )
 from pydynamo.soph.histogram import so_power_histogram, so_phase_histogram
+from pydynamo.soph.paramfit import (
+    ParamBasisOpts,
+    ParamFitResult,
+    fit_param_basis as _fit_param_basis,
+)
 from pydynamo.soph.sophase import compute_so_phase
 from pydynamo.soph.sopower import compute_so_power
 from pydynamo.spectrogram import mtm_spectrogram
@@ -63,6 +70,8 @@ class SOPHsResult:
     SOpower_times: np.ndarray
     SOphase: np.ndarray
     SOphase_times: np.ndarray
+    SOpower_paramfit: ParamFitResult | None = None
+    SOphase_paramfit: ParamFitResult | None = None
 
 
 @dataclass
@@ -86,6 +95,9 @@ def run_dynamo(
     detection_opts: DetectionOpts | None = None,
     baseline_opts: BaselineOpts | None = None,
     soph_opts: SOPHOpts | None = None,
+    param_basis_power_opts: ParamBasisOpts | None = None,
+    param_basis_phase_opts: ParamBasisOpts | None = None,
+    fit_param_basis: bool = True,
     time_range: tuple[float, float] | None = None,
     plot: bool = True,
     verbose: bool = True,
@@ -104,10 +116,9 @@ def run_dynamo(
 
     Stage convention (DYNAM-O): 1=N3, 2=N2, 3=N1, 4=REM, 5=Wake.
 
-    Options mirror the MATLAB `runDYNAMO` option structs: pass `DetectionOpts`,
-    `BaselineOpts`, and `SOPHOpts` instances to change any stage parameter. The
-    scalar keyword arguments are shorthand for the most commonly tuned fields
-    and override whatever the option objects carry.
+    Options mirror the MATLAB `runDYNAMO` option structs. Parametric fitting
+    runs by default; pass `fit_param_basis=False` to return only the raw SOPH
+    histograms.
     """
     det = detection_opts if detection_opts is not None else DetectionOpts()
     base = baseline_opts if baseline_opts is not None else BaselineOpts()
@@ -351,6 +362,35 @@ def run_dynamo(
         SOphase=(SOphase_unwrapped + np.pi) % (2 * np.pi) - np.pi,
         SOphase_times=SOphase_times,
     )
+
+    if fit_param_basis:
+        if verbose:
+            print("[dynamo] fitting parametric basis...")
+        with _timer(timings, "fit_param_basis"):
+            # Match fitParamBasis.m: phase runs first, and one failed fit does
+            # not discard a successful fit on the other axis.
+            try:
+                sophs.SOphase_paramfit = _fit_param_basis(
+                    sophs.SOphase_mat, sophs.SOphase_bins, sophs.freq_bins,
+                    opts=param_basis_phase_opts, kind="phase",
+                )
+            except Exception as exc:
+                warnings.warn(
+                    f"SO-phase parametric fit failed: {exc}",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+            try:
+                sophs.SOpower_paramfit = _fit_param_basis(
+                    sophs.SOpower_mat, sophs.SOpower_bins, sophs.freq_bins,
+                    opts=param_basis_power_opts, kind="power",
+                )
+            except Exception as exc:
+                warnings.warn(
+                    f"SO-power parametric fit failed: {exc}",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
 
     fig = None
     if plot:
