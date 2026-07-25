@@ -25,6 +25,10 @@ def _require_module(name, required=()):
 def main():
     pydynamo = _require_module("pydynamo", ("run_dynamo",))
     _require_module(
+        "pydynamo.soph.paramfit",
+        ("ParamBasisOpts", "fit_param_basis"),
+    )
+    _require_module(
         "dynamo_rs",
         (
             "extract_tfpeaks",
@@ -44,7 +48,8 @@ def main():
 
     print(
         "OK: pydynamo "
-        f"{pydynamo.__version__}, dynamo_rs, and multitaper_rs are importable."
+        f"{pydynamo.__version__}, standalone paramfit, dynamo_rs, and "
+        "multitaper_rs are importable."
     )
     return 0
 
