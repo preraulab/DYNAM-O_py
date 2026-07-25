@@ -22,6 +22,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap, LinearSegmentedColormap
 from matplotlib.patches import Rectangle
+from scipy.interpolate import interp1d
 
 from pydynamo.spectrogram import _mts, _next_pow2
 
@@ -209,6 +210,7 @@ def summary_plot(
     soph_clim_prctiles: tuple[float, float] = (5.0, 98.0),
     SOpower_norm_method: str = "p2shift1234",
     hist_peakidx: np.ndarray | None = None,
+    SOPH_stages: tuple[int, ...] = (1, 2, 3),
 ):
     """Build the DYNAM-O summary figure. Returns a matplotlib Figure."""
     fig = plt.figure(figsize=(8.5, 11), facecolor="white")
@@ -283,35 +285,97 @@ def summary_plot(
     ax_sop.tick_params(axis="x", labelbottom=False)
     ax_sop.tick_params(axis="y", labelsize=8)
 
-    # ---- TF-peak scatter (NREM-only peaks, matching SOPH selection) ----
-    # Mirror MATLAB displaySummaryPlot.m:269: scatter the same subset that
-    # contributes to the SOPH histograms (hist_peakidx = SOPH_stages filter).
+    # ---- TF-peak scatter ----
+    # Reconstruct the exact time intervals excluded from the SOPH histograms.
+    # The SO-power series already carries artifacts as NaNs; stage values use
+    # left-edge ("previous") interpolation.
+    if sop.size and sop_t.size > 1:
+        sop_times_sec = np.asarray(sophs.SOpower_times, dtype=float)
+        step = sop_times_sec[1] - sop_times_sec[0]
+        interp_start = sop_times_sec[0] - step
+        interp_end = sop_times_sec[-1] + step
+        interval_edges = np.unique(np.concatenate((
+            np.asarray(time_range, dtype=float),
+            [interp_start],
+            sop_times_sec,
+            [interp_end],
+            np.asarray(stage_times, dtype=float),
+        )))
+        interval_edges = interval_edges[
+            (interval_edges >= time_range[0])
+            & (interval_edges <= time_range[1])
+        ]
+        if interval_edges.size > 1:
+            interval_midpoints = (
+                interval_edges[:-1] + interval_edges[1:]
+            ) / 2.0
+            sop_at_interval = np.interp(
+                interval_midpoints,
+                np.concatenate(([interp_start], sop_times_sec, [interp_end])),
+                np.concatenate(([sop[0]], sop, [sop[-1]])),
+                left=np.nan, right=np.nan,
+            )
+            excluded = np.isnan(sop_at_interval)
+            if len(stage_times) and len(stage_vals):
+                stage_at_interval = interp1d(
+                    stage_times, stage_vals, kind="previous",
+                    bounds_error=False, fill_value=np.nan,
+                )(interval_midpoints)
+                stage_at_interval = np.where(
+                    np.isnan(stage_at_interval), 0.0, stage_at_interval,
+                )
+                excluded |= ~np.isin(stage_at_interval, SOPH_stages)
+
+            transitions = np.diff(np.concatenate((
+                [False], excluded, [False],
+            )).astype(int))
+            starts = np.flatnonzero(transitions == 1)
+            ends = np.flatnonzero(transitions == -1) - 1
+            for start, end in zip(starts, ends):
+                t_start = interval_edges[start] / 3600.0
+                t_end = interval_edges[end + 1] / 3600.0
+                if t_end > t_start:
+                    ax_scat.add_patch(Rectangle(
+                        (t_start, freq_limits[0]),
+                        t_end - t_start,
+                        freq_limits[1] - freq_limits[0],
+                        facecolor=(0.85, 0.85, 0.85),
+                        alpha=0.6,
+                        edgecolor="none",
+                        zorder=3,
+                    ))
+
+    # Histogram-included peaks define only the marker-size scale. Display
+    # every non-artifact peak, identified by its finite SO phase.
     if stats is not None and not stats.empty and "SOphase" in stats.columns:
+        vol = stats["Volume"].to_numpy()
+        phase = stats["SOphase"].to_numpy()
         if hist_peakidx is not None:
-            scatter_stats = stats[np.asarray(hist_peakidx, dtype=bool)].reset_index(drop=True)
+            hist_peakidx = np.asarray(hist_peakidx, dtype=bool)
+            if hist_peakidx.size != len(stats):
+                raise ValueError("hist_peakidx must have one value per stats row")
+            reference_vol = vol[hist_peakidx]
         else:
-            scatter_stats = stats
-        vol = scatter_stats["Volume"].to_numpy()
-        phase = scatter_stats["SOphase"].to_numpy()
-        # MATLAB displaySummaryPlot.m:273-276 —
-        #   pmin = prctile(..., peak_size_prctiles(1));
-        #   pmax = prctile(..., peak_size_prctiles(2));
-        # Use MATLAB-matching hazen method.
-        vol_finite = vol[np.isfinite(vol)]
-        if vol_finite.size:
-            pmin = _matlab_prctile(vol_finite, float(peak_size_prctiles[0]))
-            pmax = _matlab_prctile(vol_finite, float(peak_size_prctiles[1]))
+            reference_vol = vol
+        # MATLAB PR #78 fixes the upper-percentile marker area at 10 points².
+        # Its pmin terms cancel algebraically, leaving this equivalent scaling.
+        reference_vol = reference_vol[np.isfinite(reference_vol)]
+        if reference_vol.size:
+            max_peak_size = 10.0
+            pmax = _matlab_prctile(
+                reference_vol, float(peak_size_prctiles[1]),
+            )
+            size = np.minimum(vol, pmax) / pmax * max_peak_size
         else:
-            pmin = pmax = 1.0
-        size = vol / max(pmin, 1e-9) * 0.5
-        size[vol > pmax] = np.nan
-        keep = np.isfinite(size) & np.isfinite(phase)
+            size = np.full(len(stats), 0.5)
+        keep = np.isfinite(phase)
         ax_scat.scatter(
-            scatter_stats["PeakTime"].to_numpy()[keep] / 3600.0,
-            scatter_stats["PeakFrequency"].to_numpy()[keep],
-            s=np.clip(size[keep], 0.1, 60),
+            stats["PeakTime"].to_numpy()[keep] / 3600.0,
+            stats["PeakFrequency"].to_numpy()[keep],
+            s=size[keep],
             c=phase[keep], cmap=_CMAP_PHASE,
             vmin=-np.pi, vmax=np.pi, edgecolors="none",
+            zorder=2,
         )
         sm = plt.cm.ScalarMappable(
             cmap=_CMAP_PHASE,

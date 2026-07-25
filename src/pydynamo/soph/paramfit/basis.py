@@ -27,13 +27,12 @@ def rot_gauss(X, Y, amp, fmean, fstd, xmean, xstd, theta):
 def vm_gauss(X, Y, amp, fmean, fstd, phasepref, recikappa, theta):
     """One von-Mises x Gaussian peak — vmGauss.m.
 
-    Gaussian in frequency, von Mises in phase. `fstd` enters the Gaussian
-    un-squared (matching MATLAB after the July 2026 std-vs-variance fix), and
-    `recikappa` is 1/sqrt(kappa).
+    Gaussian in frequency, von Mises in phase. `fstd` is a standard deviation
+    in Hz, and `recikappa` is 1/sqrt(kappa).
     """
     dy = Y - fmean
     kappa = 1.0 / recikappa ** 2
-    g = np.exp(-(dy ** 2) / fstd)
+    g = np.exp(-((dy / fstd) ** 2))
     vm = np.exp(kappa * (np.cos(X - phasepref + dy * np.sin(theta)) - 1.0))
     return amp * g * vm
 
@@ -57,18 +56,18 @@ def eval_modes(params, x_bins, y_bins, kind="power", background=None,
     for row in params:
         out = out + fn(X, Y, *row[:6])
 
-    if unit_row and kind == "phase":
-        # normalized_vmGauss.m: each frequency row sums to 1 before the
-        # baseline is added. Rows that are entirely zero are left alone.
-        rs = out.sum(axis=1, keepdims=True)
-        out = np.divide(out, rs, out=np.zeros_like(out), where=rs != 0)
-
     if background is not None:
         xxx, yyy, zzz = (float(v) for v in background)
         if kind == "power":
             out = out + xxx * X + yyy * Y + zzz
         else:
             out = out + xxx * np.sin(X + yyy) + zzz
+
+    if unit_row and kind == "phase":
+        # normalized_vmGauss.m normalizes the assembled baseline + modes.
+        # Rows that are entirely zero are left alone.
+        rs = out.sum(axis=1, keepdims=True)
+        out = np.divide(out, rs, out=np.zeros_like(out), where=rs != 0)
     return out
 
 
