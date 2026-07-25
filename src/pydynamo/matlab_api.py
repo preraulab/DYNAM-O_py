@@ -89,8 +89,8 @@ def extract_tfpeaks_rs(
         PeakTime, PeakFrequency, Duration, Bandwidth, Height, Volume,
         SegmentNum, BoundingBox  -- each a 1-D numpy array (Volume, Bounding-
                                     Box are N×1 / N×4 respectively)
-        labels    -- (F, T) int64 label image suitable for passing back
-                     to mask_spectrogram_rs on a pass-2 spectrogram.
+        labels    -- (F, T) int64 unfiltered label image suitable for passing
+                     back to mask_spectrogram_rs on a pass-2 spectrogram.
         n_peaks   -- scalar
     """
     spect = np.ascontiguousarray(np.asarray(spect, dtype=np.float64))
@@ -106,8 +106,9 @@ def extract_tfpeaks_rs(
     stats, labels = extract_tfpeaks(
         spect, stimes, sfreqs,
         seg_time=float(seg_time),
-        return_labels=True,
-        downsample=tuple(int(v) for v in downsample),
+        return_labels=True, return_raw_labels=True,
+        downsample=(None if downsample is None
+                    else tuple(int(v) for v in downsample)),
         merge_thresh=float(merge_thresh),
         trim_vol=float(trim_vol),
         dur_min=float(dur_min), dur_max=float(dur_max),
