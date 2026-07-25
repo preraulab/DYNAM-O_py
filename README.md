@@ -90,12 +90,17 @@ Stage-by-stage verification:
 
 ### Install
 
+The checkout defaults to the eventual integration branch, `rust-bridge`. To
+test PR #2 before it merges, set `PYDYNAMO_BRANCH=pydynamo-paramfit-parity`
+before running the block.
+
 ```bash
 # Keep these three coordinated repositories beside one another. DYNAM-O_rs
 # resolves the multitaper Rust crate through this sibling layout, and pydynamo
 # imports the canonical Python wrapper from DYNAM-O_dev.
 mkdir DYNAM-O-stack && cd DYNAM-O-stack
-git clone --branch rust-bridge --single-branch \
+PYDYNAMO_BRANCH="${PYDYNAMO_BRANCH:-rust-bridge}"
+git clone --branch "$PYDYNAMO_BRANCH" --single-branch \
     git@github.com:preraulab/DYNAM-O_py.git DYNAM-O_py
 git clone --branch rust-bridge --single-branch \
     git@github.com:preraulab/DYNAM-O_dev.git DYNAM-O_dev
