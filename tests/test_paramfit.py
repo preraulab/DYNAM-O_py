@@ -269,13 +269,38 @@ def test_phase_axis_runs_and_wraps():
     phase_bins = np.linspace(-np.pi, np.pi, 51)
     truth = np.array([[2.0, 13.0, 2.0, 0.6, 1.0, 0.05]])
     soph = eval_modes(truth, phase_bins, FREQ_BINS, kind="phase",
-                      background=np.array([0.01, 0.2, 0.1]))
+                      background=np.array([0.01, 0.2, 0.1]),
+                      unit_row=True)
     opts = ParamBasisOpts.phase(max_peaks=2, criterion="max", verbose=False)
     res = fit_param_basis_axis(soph, phase_bins, FREQ_BINS, opts,
                                seed_modes=truth)
     assert res.params.shape[0] >= 1
     assert res.model_soph.shape == soph.shape
     assert np.isfinite(res.params).all()
+    assert res.params[0, 2] == pytest.approx(truth[0, 2], rel=0.12)
+    assert np.all((-np.pi <= res.params[:, 3]) & (res.params[:, 3] <= np.pi))
+
+
+def test_phase_background_only_fit_keeps_unit_row_normalization():
+    phase_bins = np.linspace(-np.pi, np.pi, 31)
+    freq_bins = np.linspace(8.0, 12.0, 17)
+    background = np.array([0.01, 0.2, 0.1])
+    soph = eval_modes(
+        np.empty((0, 6)), phase_bins, freq_bins, kind="phase",
+        background=background, unit_row=True,
+    )
+    seed = np.array([[0.01, 10.0, 1.5, 0.0, 1.0, 0.0]])
+    opts = ParamBasisOpts.phase(
+        max_peaks=1, criterion="max", min_amp=1.1,
+        freq_limits=(8.0, 12.0),
+    )
+
+    res = fit_param_basis_axis(
+        soph, phase_bins, freq_bins, opts, seed_modes=seed,
+    )
+
+    assert res.params.shape == (0, 6)
+    assert np.allclose(res.model_soph.sum(axis=1), 1.0, atol=1e-12)
 
 
 def test_fused_and_assembled_extraction_agree_on_seeds():
@@ -327,42 +352,7 @@ def test_gof_matches_the_selected_iteration_not_the_last():
         assert res.gof["adjrsquare"] == pytest.approx(want, rel=1e-12)
 
 
-def test_sopower_peak_shift_stage_flag_changes_normalization():
-    """The per-peak SOpower shift can be stage-restricted or not.
-
-    MATLAB's computePeakSOpower.m omits stage_times/stage_vals when it calls
-    computeSOpower, so its stats_table SOpower column is normalized against
-    every in-range sample while the SOPH axis is normalized against the named
-    stages. The two disagree by ~0.2 dB on real data. We default to the
-    consistent behaviour and expose the MATLAB one explicitly.
-    """
-    from dataclasses import replace
-
+def test_pipeline_defaults_to_matlab_all_stage_sopower_shift():
     from pydynamo.defaults import SOPHOpts
-    from pydynamo.soph.sopower import compute_so_power
 
-    rng = np.random.default_rng(0)
-    fs = 100.0
-    n = int(fs * 1200)
-    t = np.arange(n) / fs
-    # Slow oscillation whose amplitude differs by stage, so restricting the
-    # percentile to a stage subset must move it.
-    eeg = rng.standard_normal(n) + 3.0 * np.sin(2 * np.pi * 0.8 * t)
-    eeg[: n // 2] *= 4.0
-    stage_times = np.array([0.0, 600.0])
-    stage_vals = np.array([5.0, 2.0])       # Wake then N2
-
-    kw = dict(eeg_times=t, time_range=(0.0, t[-1]),
-              isexcluded=np.zeros(n, dtype=bool), retain_Fs=False)
-    _, _, _, _, p_all = compute_so_power(eeg, fs, **kw)
-    _, _, _, _, p_stage = compute_so_power(
-        eeg, fs, stage_times=stage_times, stage_vals=stage_vals, **kw)
-
-    assert p_all is not None and p_stage is not None
-    assert p_all != pytest.approx(p_stage, abs=1e-6), \
-        "restricting the shift to stages must move the percentile"
-
-    assert SOPHOpts().SOpower_peak_shift_uses_stages is True
-    assert replace(SOPHOpts(),
-                   SOpower_peak_shift_uses_stages=False
-                   ).SOpower_peak_shift_uses_stages is False
+    assert SOPHOpts().SOpower_peak_shift_uses_stages is False

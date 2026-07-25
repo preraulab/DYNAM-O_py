@@ -8,8 +8,9 @@ MATLAB pipeline:
     4. Convert to dB: 10*log10(.)
     5. Interpolate stages (previous) onto window-center times
     6. Outlier: |z| >= 3 → NaN
-    7. Normalize (default 'p2shift1234'): subtract 2nd percentile of SO-power
-       over stages {1,2,3,4} (NREM+REM)
+    7. Normalize (default 'p2shift1234'): subtract the 2nd percentile over
+       stages {1,2,3,4}, or over all in-range samples when
+       `shift_uses_stages=False` (the runDYNAMO path)
     8. Upsample to EEG rate via linear interp, restore NaN at excluded times
 """
 
@@ -49,6 +50,7 @@ def compute_so_power(
     window_params: tuple[float, float] = (5.0, 0.5),
     SOpower_outlier_threshold: float = 3.0,
     norm_method: str = "p2shift1234",
+    shift_uses_stages: bool = True,
     retain_Fs: bool = True,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, str, float | None]:
     """Return (SOpower_norm, SOpower_times, SOpower_stages, norm_method, ptile)."""
@@ -124,7 +126,7 @@ def compute_so_power(
         shift_ptile = float(m.group(1))
         shift_stages = sorted({int(c) for c in m.group(2)}) or list(range(1, 5))
         valid_stage = np.isin(SOpower_stages, shift_stages)
-        sel = in_range & valid_stage
+        sel = in_range & valid_stage if shift_uses_stages else in_range
         if not sel.any():
             raise ValueError(
                 f"No valid stages {shift_stages} found for shift normalization."

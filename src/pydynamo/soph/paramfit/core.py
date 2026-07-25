@@ -27,6 +27,7 @@ import numpy as np
 from pydynamo.soph.paramfit.basis import (
     eval_modes, min_pairwise_freq_diff, mode_overlap,
 )
+from pydynamo.soph.histogram import _wrap_to_pi
 from pydynamo.soph.paramfit.matlab_compat import prctile
 from pydynamo.soph.paramfit.opts import ParamBasisOpts, resolve_bounds
 from pydynamo.soph.paramfit.seed import residual_max_seed
@@ -38,7 +39,7 @@ except ImportError:  # pragma: no cover - the fit kernels are required
     _rs = None
 
 
-# Background-plane bounds, from fit_rotGauss.m:111-113 / fit_vmGauss.m.
+# Background-plane bounds, from fit_rotGauss.m:111-113.
 _BG_SLOPE_LIM = 0.1
 
 
@@ -68,9 +69,10 @@ def orient_soph(soph, x_bins, y_bins):
 class ParamFitResult:
     """One axis's parametric fit.
 
-    `params` is (N, 6) — [amp, fmean, fstd, xmean, xstd, theta]. `model_soph`
-    is evaluated on the *full* input grid, not just the analysis window, which
-    is what MATLAB returns.
+    `params` is (N, 6) — [amp, fmean, fstd, xmean, xstd, theta]. For phase,
+    amplitude is the empirical normalized-model density and xmean is wrapped
+    to (-pi, pi]. `model_soph` is evaluated from the raw fit over the *full*
+    input grid, not just the analysis window, which is what MATLAB returns.
     """
     params: np.ndarray
     background: np.ndarray
@@ -95,16 +97,19 @@ def _fit_once(soph_win, x_win, y_win, B0, LB, UB, opts):
     # fit_rotGauss.m:111 — 5th percentile of the *windowed* histogram, using
     # MATLAB's prctile convention (see matlab_compat.prctile).
     bg_initial = np.array([0.0, 0.0, float(prctile(soph_win, 5.0))])
-    bg_lower = np.array([-_BG_SLOPE_LIM, -_BG_SLOPE_LIM, 0.0])
-    bg_upper = np.array([_BG_SLOPE_LIM, _BG_SLOPE_LIM, float(np.max(soph_win))])
-
     if opts.kind == "power":
+        bg_lower = np.array([-_BG_SLOPE_LIM, -_BG_SLOPE_LIM, 0.0])
+        bg_upper = np.array([
+            _BG_SLOPE_LIM, _BG_SLOPE_LIM, float(np.max(soph_win)),
+        ])
         return _rs.fit_rotgauss(
             np.ascontiguousarray(soph_win), x_win, y_win,
             np.ascontiguousarray(B0), np.ascontiguousarray(LB),
             np.ascontiguousarray(UB),
             bg_initial, bg_lower, bg_upper, opts.max_iters,
         )
+    bg_lower = np.array([-1.0, -np.pi, 0.0])
+    bg_upper = np.array([1.0, np.pi, float(np.max(soph_win))])
     return _rs.fit_vmgauss(
         np.ascontiguousarray(soph_win), x_win, y_win,
         np.ascontiguousarray(B0), np.ascontiguousarray(LB),
@@ -117,21 +122,25 @@ def _fit_background_only(soph_win, x_win, y_win, kind):
     """Bounded plane / sinusoid-only fit, for when no mode survives.
 
     MATLAB reaches this by calling fit_rotGauss with an empty B0
-    (param_basis_power.m:511). The model is linear in its three coefficients,
-    so a bounded linear least squares gives the same answer as the general
-    solver without needing a mode stack.
+    (param_basis_power.m:511). The power background is linear; phase delegates
+    to the Rust kernel so its nonlinear offset and row normalization are kept.
     """
+    if kind == "phase":
+        empty = np.empty((0, 6), dtype=float)
+        bg_initial = np.array([0.0, 0.0, float(prctile(soph_win, 50.0))])
+        result = _rs.fit_vmgauss(
+            np.ascontiguousarray(soph_win), x_win, y_win,
+            empty, empty, empty,
+            bg_initial, np.zeros(3),
+            np.array([1.0, 1.0, float(np.max(soph_win))]),
+            0, True,
+        )
+        return np.asarray(result["background"], dtype=float)
+
     from scipy.optimize import lsq_linear
 
     X, Y = np.meshgrid(np.asarray(x_win, float), np.asarray(y_win, float))
-    if kind == "power":
-        A = np.column_stack([X.ravel(), Y.ravel(), np.ones(X.size)])
-    else:
-        # xxx*sin(x + yyy) + zzz is nonlinear in yyy; hold the phase offset at
-        # 0 so the remaining problem stays linear. MATLAB's solver would tune
-        # yyy, but this path only runs when no mode fit at all, where the
-        # baseline shape is not meaningful.
-        A = np.column_stack([np.sin(X).ravel(), np.zeros(X.size), np.ones(X.size)])
+    A = np.column_stack([X.ravel(), Y.ravel(), np.ones(X.size)])
     b = soph_win.ravel()
     lo = np.array([-_BG_SLOPE_LIM, -_BG_SLOPE_LIM, 0.0])
     hi = np.array([_BG_SLOPE_LIM, _BG_SLOPE_LIM, float(np.max(soph_win))])
@@ -142,6 +151,29 @@ def _fit_background_only(soph_win, x_win, y_win, kind):
 def _gof_from(res_dict):
     return {k: res_dict[k] for k in
             ("sse", "rsquare", "adjrsquare", "rmse", "dfe", "dfm")}
+
+
+def _phase_empirical_amplitudes(params, background, phase_bins, freq_bins):
+    """Sample the normalized no-sinusoid phase model at each mode center."""
+    params = np.atleast_2d(np.asarray(params, dtype=float))
+    background_no_sinusoid = np.asarray(background, dtype=float).copy()
+    background_no_sinusoid[0] = 0.0
+    model = eval_modes(
+        params, phase_bins, freq_bins, kind="phase",
+        background=background_no_sinusoid, unit_row=True,
+    )
+    amplitudes = np.empty(params.shape[0], dtype=float)
+    phase_bins = np.asarray(phase_bins, dtype=float)
+    freq_bins = np.asarray(freq_bins, dtype=float)
+    for idx, row in enumerate(params):
+        freq_idx = int(np.argmin(np.abs(freq_bins - row[1])))
+        phase_delta = np.arctan2(
+            np.sin(phase_bins - row[3]),
+            np.cos(phase_bins - row[3]),
+        )
+        phase_idx = int(np.argmin(np.abs(phase_delta)))
+        amplitudes[idx] = model[freq_idx, phase_idx]
+    return amplitudes
 
 
 def fit_param_basis_axis(soph, x_bins, y_bins, opts: ParamBasisOpts,
@@ -265,6 +297,12 @@ def fit_param_basis_axis(soph, x_bins, y_bins, opts: ParamBasisOpts,
                                         kind=opts.kind).max())
 
         B0i = params
+        amplitudes = (
+            _phase_empirical_amplitudes(
+                B0i, background, x_bins, y_bins,
+            )
+            if opts.kind == "phase" else B0i[:, 0]
+        )
 
         # --- Revert checks (param_basis_power.m:445-491) --------------------
         revert = False
@@ -281,10 +319,10 @@ def fit_param_basis_axis(soph, x_bins, y_bins, opts: ParamBasisOpts,
             revert = True
             if verbose:
                 print(f"    Overlap exceeds max: {ol_max}")
-        if np.any(B0i[:, 0] < opts.min_amp):
+        if np.any(amplitudes < opts.min_amp):
             revert = True
             if verbose:
-                print(f"    Peak amplitude below min amp: {B0i[:, 0]}")
+                print(f"    Peak amplitude below min amp: {amplitudes}")
         if opts.min_freq_diff > 0 and \
                 min_pairwise_freq_diff(B0i) < opts.min_freq_diff:
             revert = True
@@ -301,7 +339,8 @@ def fit_param_basis_axis(soph, x_bins, y_bins, opts: ParamBasisOpts,
                 # No mode helped at all: return background only.
                 bg = _fit_background_only(soph_win, x_win, y_win, opts.kind)
                 model = eval_modes(np.zeros((0, 6)), x_bins, y_bins,
-                                   kind=opts.kind, background=bg)
+                                   kind=opts.kind, background=bg,
+                                   unit_row=(opts.kind == "phase"))
                 return ParamFitResult(
                     params=np.zeros((0, 6)), background=bg, model_soph=model,
                     gof=_gof_from(res), wshed_img=wshed_img, fit_iteration=0,
@@ -322,7 +361,7 @@ def fit_param_basis_axis(soph, x_bins, y_bins, opts: ParamBasisOpts,
     if not good_nums:
         bg = _fit_background_only(soph_win, x_win, y_win, opts.kind)
         model = eval_modes(np.zeros((0, 6)), x_bins, y_bins, kind=opts.kind,
-                           background=bg)
+                           background=bg, unit_row=(opts.kind == "phase"))
         return ParamFitResult(
             params=np.zeros((0, 6)), background=bg, model_soph=model,
             gof={}, wshed_img=wshed_img, fit_iteration=0,
@@ -335,11 +374,17 @@ def fit_param_basis_axis(soph, x_bins, y_bins, opts: ParamBasisOpts,
         kneedle_tol=opts.kneedle_tol, verbose=verbose,
     )
     best = good_models[good_nums.index(fit_iteration)]
-    params = np.atleast_2d(best["params"])
+    raw_params = np.atleast_2d(best["params"])
     background = np.asarray(best["background"], dtype=float)
-    model_soph = eval_modes(params, x_bins, y_bins, kind=opts.kind,
+    model_soph = eval_modes(raw_params, x_bins, y_bins, kind=opts.kind,
                             background=background,
                             unit_row=(opts.kind == "phase"))
+    params = raw_params.copy()
+    if opts.kind == "phase":
+        params[:, 0] = _phase_empirical_amplitudes(
+            raw_params, background, x_bins, y_bins,
+        )
+        params[:, 3] = _wrap_to_pi(raw_params[:, 3])
     if verbose:
         print(f"Selected iteration {fit_iteration} of {good_nums}")
 
