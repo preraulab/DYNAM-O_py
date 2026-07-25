@@ -125,21 +125,11 @@ class SOPHOpts:
     SOphase_min_peak_at_freq: int = 0
     SOphase_norm_dim: int = 1
 
-    # Whether the per-peak `SOpower` column's shift-normalization percentile is
-    # restricted to the stages named in `SOpower_norm_method` (the "1234" of
-    # p2shift1234), as the histogram's is.
-    #
-    # MATLAB says False by accident: computePeakSOpower.m calls computeSOpower
-    # without stage_times/stage_vals, so SOpower_stages degrades to scalar
-    # `true`, the stage mask drops out, and the percentile is taken over every
-    # in-range sample. SOpowerHistogram.m *does* pass the stages. So within one
-    # MATLAB run the stats_table SOpower column and the SOPH SO-power axis use
-    # different normalizations — on the validation night they differ by 0.21 dB,
-    # meaning a peak's reported SOpower does not match the bin it was placed in.
-    #
-    # True (the default here) keeps the column and the histogram consistent.
-    # Set False to reproduce MATLAB's stats_table column bit-for-bit.
-    SOpower_peak_shift_uses_stages: bool = True
+    # Whether the one shared SO-power series uses only the stages named in the
+    # shift method when calculating its normalization percentile. False
+    # matches runDYNAMO, which computes one all-stage-shifted series and reuses
+    # it for both per-peak values and the histogram.
+    SOpower_peak_shift_uses_stages: bool = False
 
     # Stages included in histograms (DYNAM-O convention: 1=N3 ... 5=Wake)
     SOPH_stages: tuple = (1, 2, 3)              # NREM only

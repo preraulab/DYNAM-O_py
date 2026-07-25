@@ -279,26 +279,17 @@ def run_dynamo(
             window_params=soph.SOpower_window_params,
             SOpower_outlier_threshold=soph.SOpower_outlier_threshold,
             norm_method=soph.SOpower_norm_method,
+            shift_uses_stages=soph.SOpower_peak_shift_uses_stages,
             retain_Fs=soph.SOpower_retain_Fs,
         )
         if not stats.empty:
-            peak_pow, peak_t = SOpower_norm, SOpower_times
-            if not soph.SOpower_peak_shift_uses_stages:
-                # Reproduce computePeakSOpower.m, which omits the stages and so
-                # normalizes against every in-range sample rather than the
-                # stages named in the norm method. See the field's docstring.
-                peak_pow, peak_t, _, _, _ = compute_so_power(
-                    data_tr, fs, eeg_times=t_tr, time_range=time_range,
-                    isexcluded=artifacts,
-                    SO_freqrange=soph.SO_freqrange,
-                    tapers=soph.SOpower_tapers,
-                    window_params=soph.SOpower_window_params,
-                    SOpower_outlier_threshold=soph.SOpower_outlier_threshold,
-                    norm_method=soph.SOpower_norm_method,
-                    retain_Fs=soph.SOpower_retain_Fs,
-                )
-            xp = np.concatenate(([peak_t[0] - 1], peak_t, [peak_t[-1] + 1]))
-            fp = np.concatenate(([peak_pow[0]], peak_pow, [peak_pow[-1]]))
+            xp = np.concatenate((
+                [SOpower_times[0] - 1], SOpower_times,
+                [SOpower_times[-1] + 1],
+            ))
+            fp = np.concatenate((
+                [SOpower_norm[0]], SOpower_norm, [SOpower_norm[-1]],
+            ))
             stats["SOpower"] = np.interp(stats["PeakTime"].to_numpy(), xp, fp)
 
     if verbose: print("[dynamo] SO-phase...")
@@ -372,6 +363,7 @@ def run_dynamo(
                 data=data_tr, fs=fs, time_range=time_range,
                 freq_limits=(2.0, 25.0), mtm_freq_range=(2.0, 25.0),
                 hist_peakidx=peak_selection_inds,
+                SOPH_stages=soph.SOPH_stages,
             )
     timings["total"] = _time.time() - t_start
 
