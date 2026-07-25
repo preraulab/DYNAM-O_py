@@ -195,11 +195,21 @@ def test_all_stage_shift_preserves_real_stage_labels(monkeypatch):
     assert np.allclose(all_stage - stage_only, 10.0)
 
 
-def test_summary_plot_shows_all_nonartifact_peaks_and_shades_exclusions():
+@pytest.mark.parametrize(
+    ("volumes", "expected_sizes"),
+    [
+        ([1.0, 2.0, 4.0, 8.0, 16.0, 32.0], [0.625, 2.5, 5.0, 10.0]),
+        ([2.0, 3.0, 5.0, 7.0, 50.0, 100.0], [0.4, 1.0, 1.4, 10.0]),
+    ],
+    ids=("baseline_volumes", "skewed_volumes"),
+)
+def test_summary_plot_shows_all_nonartifact_peaks_and_shades_exclusions(
+    volumes, expected_sizes,
+):
     stats = pd.DataFrame({
         "PeakTime": [0.25, 1.0, 2.0, 4.0, 6.5, 8.0],
         "PeakFrequency": [6.0, 8.0, 10.0, 12.0, 14.0, 16.0],
-        "Volume": [1.0, 2.0, 4.0, 8.0, 16.0, 32.0],
+        "Volume": volumes,
         "SOphase": [-np.pi / 2, np.nan, 0.0, np.pi / 2, np.pi / 4, np.nan],
     })
     stats_before = stats.copy(deep=True)
@@ -241,7 +251,8 @@ def test_summary_plot_shows_all_nonartifact_peaks_and_shades_exclusions():
             offsets[:, 0], np.array([0.25, 2.0, 4.0, 6.5]) / 3600.0,
         )
         assert np.allclose(offsets[:, 1], [6.0, 10.0, 12.0, 14.0])
-        assert np.allclose(sizes, [0.05, 0.2, 0.4, 0.8])
+        assert np.allclose(sizes, expected_sizes)
+        assert np.max(sizes) == pytest.approx(10.0)
         assert np.allclose(
             np.asarray(scatter.get_array())[order],
             [-np.pi / 2, 0.0, np.pi / 2, np.pi / 4],
