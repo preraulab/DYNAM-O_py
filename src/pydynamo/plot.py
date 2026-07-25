@@ -357,19 +357,15 @@ def summary_plot(
             reference_vol = vol[hist_peakidx]
         else:
             reference_vol = vol
-        # MATLAB displaySummaryPlot.m:273-276 —
-        #   pmin = prctile(..., peak_size_prctiles(1));
-        #   pmax = prctile(..., peak_size_prctiles(2));
-        # Use MATLAB-matching hazen method.
+        # MATLAB PR #78 fixes the upper-percentile marker area at 10 points².
+        # Its pmin terms cancel algebraically, leaving this equivalent scaling.
         reference_vol = reference_vol[np.isfinite(reference_vol)]
         if reference_vol.size:
-            pmin = _matlab_prctile(
-                reference_vol, float(peak_size_prctiles[0]),
-            )
+            max_peak_size = 10.0
             pmax = _matlab_prctile(
                 reference_vol, float(peak_size_prctiles[1]),
             )
-            size = np.minimum(vol, pmax) / pmin * 0.5
+            size = np.minimum(vol, pmax) / pmax * max_peak_size
         else:
             size = np.full(len(stats), 0.5)
         keep = np.isfinite(phase)
