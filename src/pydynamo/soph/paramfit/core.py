@@ -396,6 +396,64 @@ def fit_param_basis_axis(soph, x_bins, y_bins, opts: ParamBasisOpts,
     )
 
 
+def _uniquetol_groups(coords, tolerance):
+    """Group rows using MATLAB uniquetol's default per-column scale."""
+    coords = np.asarray(coords, dtype=float)
+    scale = np.max(np.abs(coords), axis=0)
+    unassigned = np.ones(coords.shape[0], dtype=bool)
+    groups = []
+    for idx in range(coords.shape[0]):
+        if not unassigned[idx]:
+            continue
+        close = np.all(
+            np.abs(coords - coords[idx]) <= tolerance * scale,
+            axis=1,
+        )
+        members = np.flatnonzero(unassigned & close)
+        groups.append(members)
+        unassigned[members] = False
+    return groups
+
+
+def _deduplicate_periodic_phase_stats(stats):
+    """Keep one in-range representative for each periodic watershed region."""
+    features = stats["SOFeature"].to_numpy(dtype=float)
+    coords = np.column_stack([
+        stats["PeakFrequency"].to_numpy(dtype=float),
+        _wrap_to_pi(features),
+    ])
+    kept = []
+    for group in _uniquetol_groups(coords, 0.1):
+        # A real region has periodic copies. Singletons are clipped artifacts
+        # at the two outer edges of the tripled watershed image.
+        if group.size < 2:
+            continue
+        in_range = group[
+            (features[group] >= -np.pi) & (features[group] <= np.pi)
+        ]
+        if in_range.size == 0:
+            return None
+        if in_range.size == 1:
+            kept.append(int(in_range[0]))
+            continue
+        for subgroup in _uniquetol_groups(coords[group], 0.01):
+            members = group[subgroup]
+            valid = members[
+                (features[members] >= -np.pi)
+                & (features[members] <= np.pi)
+            ]
+            if valid.size != 1:
+                return None
+            kept.append(int(valid[0]))
+
+    if not kept or len(kept) != len(set(kept)):
+        return None
+    unique_stats = stats.iloc[kept].reset_index(drop=True)
+    if not unique_stats["SOFeature"].between(-np.pi, np.pi).all():
+        return None
+    return unique_stats
+
+
 def fit_param_basis(soph, x_bins, y_bins, opts: ParamBasisOpts | None = None,
                     kind: str = "power") -> ParamFitResult:
     """Seed from a watershed over the histogram, then fit — fitParamBasis.m.
@@ -418,19 +476,41 @@ def fit_param_basis(soph, x_bins, y_bins, opts: ParamBasisOpts | None = None,
                 else ParamBasisOpts.phase())
 
     soph = orient_soph(soph, x_bins, y_bins)
-    seed_img = np.exp(soph) if opts.wshed_exp else soph
-    if opts.gauss_filt_std is not None and opts.kind == "phase":
-        sig = np.asarray(opts.gauss_filt_std, dtype=float)
-        seed_img = gaussian_filter(np.nan_to_num(seed_img), sigma=tuple(sig))
+    watershed_x = x_bins
+    if opts.kind == "phase":
+        phase_bins = np.asarray(x_bins, dtype=float).ravel()
+        # param_basis_phase.m tiles three periods, dropping only the duplicated
+        # endpoints from the middle copy so that the extended axis is monotonic.
+        seed_img = np.concatenate(
+            [soph, soph[:, 1:-1], soph],
+            axis=1,
+        )
+        watershed_x = np.concatenate([
+            phase_bins - 2 * np.pi,
+            phase_bins[1:-1],
+            phase_bins + 2 * np.pi,
+        ])
+        if opts.gauss_filt_std is not None:
+            sig = np.asarray(opts.gauss_filt_std, dtype=float)
+            seed_img = gaussian_filter(
+                np.nan_to_num(seed_img), sigma=tuple(sig),
+            )
+        if opts.wshed_exp:
+            seed_img = np.exp(seed_img)
+    else:
+        seed_img = np.exp(soph) if opts.wshed_exp else soph
 
     merge_thresh, dur_min, bw_min, height_min, trim_vol = opts.watershed_params
     try:
         stats, wshed_img = extract_hist_peaks(
-            seed_img, x_bins, y_bins, merge_thresh, dur_min, bw_min,
+            seed_img, watershed_x, y_bins, merge_thresh, dur_min, bw_min,
             height_min, trim_vol,
         )
     except ValueError:
         stats, wshed_img = None, None
+
+    if opts.kind == "phase" and stats is not None and len(stats):
+        stats = _deduplicate_periodic_phase_stats(stats)
 
     seeds = None
     if stats is not None and len(stats):
