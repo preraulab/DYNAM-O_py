@@ -141,8 +141,11 @@ def refine_peak_frequency(
     )
 
     # Peaks too close to the data boundaries cannot support a full Hann
-    # window. MATLAB and the Rust C API retain their original frequencies.
-    refined = stats["PeakFrequency"].to_numpy(dtype=float, copy=True)
+    # window. MATLAB and the Rust C API retain only those original frequencies;
+    # interior peaks remain invalid unless refinement succeeds.
+    original = stats["PeakFrequency"].to_numpy(dtype=float)
+    refined = np.full(event_times.size, np.nan, dtype=float)
+    refined[~keep] = original[~keep]
 
     if _HAS_RUST and refine_method == "spline_interp":
         # Run the per-event spline+argmax loop in Rust (rayon-parallel).
