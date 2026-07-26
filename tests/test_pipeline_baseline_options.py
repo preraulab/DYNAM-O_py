@@ -83,6 +83,45 @@ def test_scalar_baseline_trim_without_nonwake_uses_staging_span():
     assert result == (0.0, 30.0)
 
 
+def test_run_dynamo_defaults_to_first_and_last_valid_scored_stage(monkeypatch):
+    captured = {}
+
+    class StopAfterArtifacts(Exception):
+        pass
+
+    def capture_artifact_input(data, fs):
+        captured["data"] = data.copy()
+        captured["fs"] = fs
+        raise StopAfterArtifacts
+
+    monkeypatch.setattr(pipeline, "detect_artifacts", capture_artifact_input)
+
+    with pytest.raises(StopAfterArtifacts):
+        pipeline.run_dynamo(
+            np.arange(8, dtype=float),
+            1.0,
+            stage_times=np.array([0.0, 2.0, 4.0, 6.0]),
+            stage_vals=np.array([0.0, 2.0, 5.0, 6.0]),
+            plot=False,
+            verbose=False,
+        )
+
+    assert captured["fs"] == 1.0
+    assert np.array_equal(captured["data"], [2.0, 3.0, 4.0])
+
+
+def test_run_dynamo_default_range_requires_a_valid_scored_stage():
+    with pytest.raises(ValueError, match="No valid stages"):
+        pipeline.run_dynamo(
+            np.arange(4, dtype=float),
+            1.0,
+            stage_times=np.array([0.0, 2.0]),
+            stage_vals=np.array([0.0, 6.0]),
+            plot=False,
+            verbose=False,
+        )
+
+
 def test_run_dynamo_passes_custom_baseline_options_to_both_passes(
     monkeypatch,
 ):
