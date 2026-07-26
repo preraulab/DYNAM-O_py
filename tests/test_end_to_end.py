@@ -69,6 +69,19 @@ def test_end_to_end_segment(example_data, tmp_path):
     assert out.SOPHs.SOphase_paramfit.model_soph.shape == \
         out.SOPHs.SOphase_mat.T.shape
     assert "fit_param_basis" in out.timings
+    assert out.SOPHs.SOpower_splinefit is not None
+    assert out.SOPHs.SOphase_splinefit is not None
+    assert out.SOPHs.SOpower_splinefit.coefs.shape == (20, 7)
+    assert out.SOPHs.SOphase_splinefit.coefs.shape == (11, 7)
+    assert out.SOPHs.SOpower_splinefit.splinefit.shape == (
+        out.SOPHs.SOpower_splinefit.fit_SOfeature_bins.size,
+        out.SOPHs.SOpower_splinefit.fit_freq_bins.size,
+    )
+    assert out.SOPHs.SOphase_splinefit.splinefit.shape == (
+        out.SOPHs.SOphase_splinefit.fit_SOfeature_bins.size,
+        out.SOPHs.SOphase_splinefit.fit_freq_bins.size,
+    )
+    assert "fit_spline_basis" in out.timings
 
     # The frequency axis is the SOPH histogram range (2-18 Hz by default), not
     # the spectrogram's 0-30 Hz range. Bin centers accumulate step-sized
