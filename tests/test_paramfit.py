@@ -284,6 +284,57 @@ def test_phase_axis_runs_and_wraps():
     assert np.all((-np.pi <= res.params[:, 3]) & (res.params[:, 3] <= np.pi))
 
 
+def test_phase_seeded_iterations_restart_and_skip_rejected_seed(monkeypatch):
+    """Seeded phase fits restart from MATLAB's original watershed guesses."""
+    from pydynamo.soph.paramfit import core
+
+    phase_bins = np.linspace(-np.pi, np.pi, 31)
+    freq_bins = np.linspace(2.0, 18.0, 33)
+    seeds = np.array([
+        [0.05, 6.0, 1.2, -1.0, 0.8, 0.0],
+        [0.04, 10.0, 1.3, 0.0, 0.9, 0.0],
+        [0.03, 14.0, 1.4, 1.0, 1.0, 0.0],
+    ])
+    soph = eval_modes(
+        seeds, phase_bins, freq_bins, kind="phase",
+        background=np.array([0.0, 0.0, 0.01]), unit_row=True,
+    )
+    initial_guesses = []
+    adjusted_r2 = iter((0.5, 0.5, 0.7))
+
+    def fake_fit(soph_win, x_win, y_win, B0, LB, UB, opts):
+        assert LB.shape == B0.shape == UB.shape
+        initial_guesses.append(B0.copy())
+        params = B0.copy()
+        params[:, 1] += 0.75
+        params[:, 3] += 0.25
+        r2 = next(adjusted_r2)
+        return {
+            "params": params,
+            "background": np.zeros(3),
+            "sse": 1.0 - r2,
+            "rsquare": r2,
+            "adjrsquare": r2,
+            "rmse": 0.1,
+            "dfe": soph_win.size - params.size - 3,
+            "dfm": params.size + 3,
+        }
+
+    monkeypatch.setattr(core, "_fit_once", fake_fit)
+    opts = ParamBasisOpts.phase(
+        max_peaks=3, criterion="mindr2", min_dr2=0.01,
+        min_amp=0.0, max_overlap=1.0,
+    )
+
+    fit_param_basis_axis(
+        soph, phase_bins, freq_bins, opts, seed_modes=seeds,
+    )
+
+    np.testing.assert_array_equal(initial_guesses[0], seeds[[0]])
+    np.testing.assert_array_equal(initial_guesses[1], seeds[[0, 1]])
+    np.testing.assert_array_equal(initial_guesses[2], seeds[[0, 2]])
+
+
 def test_phase_background_only_fit_keeps_unit_row_normalization():
     phase_bins = np.linspace(-np.pi, np.pi, 31)
     freq_bins = np.linspace(8.0, 12.0, 17)
