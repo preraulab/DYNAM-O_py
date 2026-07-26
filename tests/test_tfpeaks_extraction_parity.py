@@ -24,6 +24,14 @@ def _fake_fused_result(shape):
         "area": np.array([1.0, 1.0]),
         "peakiness": np.array([1.0, 1.0]),
         "bbox": np.zeros((2, 4)),
+        "height_data": [
+            np.array([11.0, 12.0]),
+            np.array([21.0, 22.0, 23.0]),
+        ],
+        "boundaries": [
+            np.array([[1.0, 3.0], [1.5, 3.5]]),
+            np.array([[2.0, 4.0], [2.5, 4.5], [2.0, 4.0]]),
+        ],
         "labels": labels,
     }
 
@@ -62,6 +70,7 @@ def test_fused_passes_global_shift_and_rust_axis_order(
     args = calls[0]
     assert args[5:7] == expected_rust_strides
     assert args[10] == -7.0
+    assert args[-2:] == (True, True)
 
 
 def test_fused_return_labels_match_rows_unless_raw_requested(monkeypatch):
@@ -87,6 +96,14 @@ def test_fused_return_labels_match_rows_unless_raw_requested(monkeypatch):
 
     assert filtered_table["label"].tolist() == [1]
     assert set(np.unique(filtered_labels)) == {0, 1}
+    assert {"HeightData", "Boundaries"} <= set(filtered_table.columns)
+    np.testing.assert_array_equal(
+        filtered_table.loc[0, "HeightData"], np.array([11.0, 12.0]),
+    )
+    np.testing.assert_array_equal(
+        filtered_table.loc[0, "Boundaries"],
+        np.array([[1.0, 3.0], [1.5, 3.5]]),
+    )
     pd.testing.assert_frame_equal(raw_table, filtered_table)
     assert set(np.unique(raw_labels)) == {1, 2}
 
@@ -214,11 +231,17 @@ def test_real_fused_kernel_matches_explicit_matlab_parity_arguments(
         float("inf"),
         float("-inf"),
         0,
-        False,
-        False,
+        True,
+        True,
     )
 
     np.testing.assert_array_equal(labels, np.asarray(direct["labels"]))
     np.testing.assert_allclose(
         table["PeakTime"].to_numpy(), np.asarray(direct["peak_time"]),
     )
+    assert len(table["HeightData"]) == len(direct["height_data"])
+    assert len(table["Boundaries"]) == len(direct["boundaries"])
+    for row, expected in zip(table["HeightData"], direct["height_data"]):
+        np.testing.assert_array_equal(row, np.asarray(expected))
+    for row, expected in zip(table["Boundaries"], direct["boundaries"]):
+        np.testing.assert_array_equal(row, np.asarray(expected))
