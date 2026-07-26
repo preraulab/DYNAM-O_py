@@ -153,7 +153,7 @@ def test_phase_background_only_uses_matlab_empty_mode_bounds(monkeypatch):
     )
     soph = np.arange(1.0, 7.0).reshape(2, 3)
 
-    background = core._fit_background_only(
+    background, _ = core._fit_background_only(
         soph, np.arange(3.0), np.arange(2.0), "phase",
     )
 
