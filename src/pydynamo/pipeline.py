@@ -214,7 +214,13 @@ def run_dynamo(
     stage_vals = np.asarray(stage_vals, dtype=float).ravel()
 
     if time_range is None:
-        time_range = (0.0, (data.size - 1) / fs)
+        valid_stage_inds = np.flatnonzero((stage_vals > 0) & (stage_vals < 6))
+        if valid_stage_inds.size == 0:
+            raise ValueError("No valid stages found.")
+        time_range = (
+            float(stage_times[valid_stage_inds[0]]),
+            float(stage_times[valid_stage_inds[-1]]),
+        )
 
     i0 = int(round(time_range[0] * fs))
     i1 = int(round(time_range[1] * fs))
