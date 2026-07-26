@@ -154,14 +154,11 @@ def tfpeak_histogram(
     time_in_bin = np.zeros((num_cbins, 5), dtype=float)
     prop_in_bin = np.zeros((num_cbins, 5), dtype=float)
 
-    compute_tib = compute_rate or (min_time_in_bin > 0)
-
     # Precompute per-stage validity: (N_times, 5) logical.
     # Stages are labelled 1..5 per DYNAM-O convention.
-    if compute_tib:
-        stage_valid_masks = np.zeros((c_stages.size, 5), dtype=bool)
-        for k in range(1, 6):
-            stage_valid_masks[:, k - 1] = (c_stages == k) & c_valid
+    stage_valid_masks = np.zeros((c_stages.size, 5), dtype=bool)
+    for k in range(1, 6):
+        stage_valid_masks[:, k - 1] = (c_stages == k) & c_valid
 
     low_b, high_b = float(circular_bounds[0]), float(circular_bounds[1])
     crange = high_b - low_b
@@ -181,16 +178,19 @@ def tfpeak_histogram(
             tib_inds = (c_metric >= lo_e) & (c_metric < hi_e)
             inc_inds = (peak_c >= lo_e) & (peak_c < hi_e)
 
-        if compute_tib:
-            # minutes per stage
-            # (N,5) & (N,1) → (N,5); sum along axis=0; * dt / 60
-            tib_per_stage = np.sum(tib_inds[:, None] & stage_valid_masks, axis=0) * c_dt / 60.0
-            time_in_bin[s, :] = tib_per_stage
-            tib_allstages = np.sum(tib_inds & c_valid_allstages) * c_dt / 60.0
-            if tib_allstages > 0:
-                prop_in_bin[s, :] = tib_per_stage / tib_allstages
-            if tib_per_stage.sum() < min_time_in_bin:
-                continue
+        # minutes per stage
+        # (N,5) & (N,1) → (N,5); sum along axis=0; * dt / 60
+        tib_per_stage = np.sum(
+            tib_inds[:, None] & stage_valid_masks, axis=0,
+        ) * c_dt / 60.0
+        time_in_bin[s, :] = tib_per_stage
+        tib_allstages = (
+            np.sum(tib_inds & c_valid_allstages) * c_dt / 60.0
+        )
+        if tib_allstages > 0:
+            prop_in_bin[s, :] = tib_per_stage / tib_allstages
+        if min_time_in_bin > 0 and tib_per_stage.sum() < min_time_in_bin:
+            continue
 
         if inc_inds.any():
             counts = np.sum(inc_inds[:, None] & all_infreqbin, axis=0).astype(float)
