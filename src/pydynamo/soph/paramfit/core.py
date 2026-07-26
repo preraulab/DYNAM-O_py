@@ -19,10 +19,11 @@ trust-region solver. Everything else here is the search around it.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
+import pandas as pd
 
 from pydynamo.soph.paramfit.basis import (
     eval_modes, min_pairwise_freq_diff, mode_overlap,
@@ -30,6 +31,11 @@ from pydynamo.soph.paramfit.basis import (
 from pydynamo.soph.histogram import _wrap_to_pi
 from pydynamo.soph.paramfit.matlab_compat import prctile
 from pydynamo.soph.paramfit.opts import ParamBasisOpts, resolve_bounds
+from pydynamo.soph.paramfit.output import (
+    annotate_modes_with_peak_stats,
+    annotate_power_preferred_phase,
+    create_params_table,
+)
 from pydynamo.soph.paramfit.seed import residual_max_seed
 from pydynamo.soph.paramfit.select import select_iteration
 
@@ -69,11 +75,13 @@ def orient_soph(soph, x_bins, y_bins):
 class ParamFitResult:
     """One axis's parametric fit.
 
-    `params` is (N, 6) — [amp, fmean, fstd, xmean, xstd, theta]. For phase,
-    amplitude is the empirical normalized-model density and xmean is wrapped
-    to (-pi, pi]. `model_soph` is evaluated from the raw fit over the *full*
-    input grid, not just the analysis window, which is what MATLAB returns.
-    `gof` describes that selected fit over the valid analysis window.
+    `params` preserves the legacy numeric (N, 6) array
+    [amp, fmean, fstd, xmean, xstd, theta]. `params_table` provides MATLAB's
+    stable named output schema, including derived and per-mode annotations.
+    For phase, amplitude is the empirical normalized-model density and xmean
+    is wrapped to (-pi, pi]. `model_soph` is evaluated from the raw fit over
+    the *full* input grid, not just the analysis window, which is what MATLAB
+    returns. `gof` describes that selected fit over the valid analysis window.
     """
     params: np.ndarray
     background: np.ndarray
@@ -84,6 +92,7 @@ class ParamFitResult:
     iter_numbers: list
     iter_rsquared: list
     n_wshed_modes: int
+    params_table: pd.DataFrame = field(default_factory=pd.DataFrame)
 
 
 def _fit_once(soph_win, x_win, y_win, B0, LB, UB, opts):
@@ -239,6 +248,7 @@ def fit_param_basis_axis(soph, x_bins, y_bins, opts: ParamBasisOpts,
             model_soph=np.full_like(soph, np.nan), gof={}, wshed_img=None,
             fit_iteration=0, iter_numbers=[], iter_rsquared=[],
             n_wshed_modes=0,
+            params_table=create_params_table(np.zeros((0, 6)), opts.kind),
         )
 
     x_win = x_bins[valid_x]
@@ -376,6 +386,9 @@ def fit_param_basis_axis(soph, x_bins, y_bins, opts: ParamBasisOpts,
                     gof=gof, wshed_img=wshed_img, fit_iteration=0,
                     iter_numbers=[], iter_rsquared=[],
                     n_wshed_modes=n_wshed_modes,
+                    params_table=create_params_table(
+                        np.zeros((0, 6)), opts.kind
+                    ),
                 )
             B0i, LBi, UBi = last_B0i, last_LBi, last_UBi
             if ii > n_wshed_modes:
@@ -396,6 +409,7 @@ def fit_param_basis_axis(soph, x_bins, y_bins, opts: ParamBasisOpts,
             params=np.zeros((0, 6)), background=bg, model_soph=model,
             gof=gof, wshed_img=wshed_img, fit_iteration=0,
             iter_numbers=[], iter_rsquared=[], n_wshed_modes=n_wshed_modes,
+            params_table=create_params_table(np.zeros((0, 6)), opts.kind),
         )
 
     fit_iteration = select_iteration(
@@ -423,6 +437,7 @@ def fit_param_basis_axis(soph, x_bins, y_bins, opts: ParamBasisOpts,
         gof=_gof_from(best), wshed_img=wshed_img,
         fit_iteration=fit_iteration, iter_numbers=good_nums,
         iter_rsquared=good_r2, n_wshed_modes=n_wshed_modes,
+        params_table=create_params_table(params, opts.kind),
     )
 
 
@@ -484,8 +499,17 @@ def _deduplicate_periodic_phase_stats(stats):
     return unique_stats
 
 
-def fit_param_basis(soph, x_bins, y_bins, opts: ParamBasisOpts | None = None,
-                    kind: str = "power") -> ParamFitResult:
+def fit_param_basis(
+    soph,
+    x_bins,
+    y_bins,
+    opts: ParamBasisOpts | None = None,
+    kind: str = "power",
+    *,
+    stats_table_soph=None,
+    phase_model_soph=None,
+    phase_bins=None,
+) -> ParamFitResult:
     """Seed from a watershed over the histogram, then fit — fitParamBasis.m.
 
     `soph` is (n_freq, n_feature). `kind` picks the default option set when
@@ -552,5 +576,20 @@ def fit_param_basis(soph, x_bins, y_bins, opts: ParamBasisOpts | None = None,
         print("Watershed produced no usable seeds; "
               "fitting from a synthetic seed instead.")
 
-    return fit_param_basis_axis(soph, x_bins, y_bins, opts,
-                                seed_modes=seeds, wshed_img=wshed_img)
+    result = fit_param_basis_axis(
+        soph, x_bins, y_bins, opts, seed_modes=seeds, wshed_img=wshed_img
+    )
+    if opts.kind == "power":
+        result.params_table = annotate_power_preferred_phase(
+            result.params_table,
+            phase_model_soph,
+            y_bins,
+            phase_bins,
+        )
+    result.params_table = annotate_modes_with_peak_stats(
+        result.params_table,
+        opts.kind,
+        stats_table_soph,
+        opts.peak_assign_prob,
+    )
+    return result
