@@ -266,6 +266,49 @@ def test_swap3_histogram_parity(bisect_segment):
     )
 
 
+def test_swap3_raw_counts_still_return_time_in_bin(monkeypatch):
+    from pydynamo.soph import histogram
+
+    if not histogram._HAS_RUST:
+        pytest.skip("dynamo_rs histogram kernel is not installed")
+
+    kwargs = {
+        "c_metric": np.arange(10.0),
+        "c_stages": np.repeat(np.arange(1.0, 6.0), 2),
+        "c_dt": 6.0,
+        "c_valid": np.ones(10, dtype=bool),
+        "c_valid_allstages": np.ones(10, dtype=bool),
+        "peak_freqs": np.array([1.5, 2.5]),
+        "peak_c": np.array([1.0, 6.0]),
+        "freq_range": (1.0, 3.0),
+        "freq_binsizestep": (2.0, 2.0),
+        "c_range": (0.0, 10.0),
+        "c_binsizestep": (10.0, 10.0),
+        "norm_dim": 0,
+        "compute_rate": False,
+        "min_time_in_bin": 0.0,
+        "min_peak_at_freq": 0,
+    }
+
+    rust = histogram.tfpeak_histogram(**kwargs)
+    monkeypatch.setattr(histogram, "_HAS_RUST", False)
+    python = histogram.tfpeak_histogram(**kwargs)
+
+    expected_time = np.array([
+        [0.2, 0.2, 0.1, 0.0, 0.0],
+        [0.0, 0.0, 0.1, 0.2, 0.2],
+    ])
+    expected_prop = expected_time / 0.5
+    expected_counts = np.eye(2)
+
+    assert np.array_equal(python["c_mat"], expected_counts)
+    assert np.allclose(python["time_in_bin"], expected_time)
+    assert np.allclose(python["prop_in_bin"], expected_prop)
+    assert np.array_equal(python["c_mat"], rust["c_mat"])
+    assert np.allclose(python["time_in_bin"], rust["time_in_bin"])
+    assert np.allclose(python["prop_in_bin"], rust["prop_in_bin"])
+
+
 # ---------------------------------------------------------------------------
 # swap #4 — Hann refinement (hann_event_spectra + spline argmax)
 # ---------------------------------------------------------------------------
