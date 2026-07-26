@@ -27,6 +27,14 @@ _SUBMODULE_PATH = (
     / "DYNAM-O_dev" / "toolbox" / "helper_functions"
     / "multitaper_toolbox" / "python"
 )
+_WRAPPER_PATH = _SUBMODULE_PATH / "multitaper_spectrogram_python.py"
+if not _WRAPPER_PATH.is_file():
+    raise ModuleNotFoundError(
+        "The DYNAM-O multitaper Python wrapper is missing. Expected it at "
+        f"{_WRAPPER_PATH}. Clone DYNAM-O_dev on its rust-bridge branch next "
+        "to DYNAM-O_py and initialize "
+        "toolbox/helper_functions/multitaper_toolbox; see README.md."
+    )
 if str(_SUBMODULE_PATH) not in sys.path:
     sys.path.insert(0, str(_SUBMODULE_PATH))
 
