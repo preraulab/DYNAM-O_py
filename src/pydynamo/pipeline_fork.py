@@ -221,7 +221,7 @@ def run_dynamo_fork(
         eeg_times=t_tr, time_range=time_range, isexcluded=artifacts,
         SO_freqrange=(0.3, 1.5), tapers=(5, 9), window_params=(5.0, 0.5),
         SOpower_outlier_threshold=3.0, norm_method="p2shift1234",
-        shift_uses_stages=False, retain_Fs=True,
+        retain_Fs=True,
     )
     if not stats.empty:
         xp = np.concatenate(([SOpower_times[0] - 1], SOpower_times,
