@@ -299,11 +299,19 @@ def fit_param_basis_axis(soph, x_bins, y_bins, opts: ParamBasisOpts,
     last_B0i = last_LBi = last_UBi = None
     model_soph = np.zeros_like(soph)
     last_ii = 0
+    valid_seed_modes = (
+        np.ones(n_wshed_modes, dtype=bool) if opts.kind == "phase" else None
+    )
 
     for ii in range(1, max_peaks + 1):
         last_ii = ii
         if ii <= n_wshed_modes:
-            B0i = np.vstack([B0i, mode_params[ii - 1]])
+            if opts.kind == "phase":
+                # MATLAB restarts seeded phase fits from the original
+                # watershed/prefix parameters, omitting rejected seeds.
+                B0i = mode_params[:ii][valid_seed_modes[:ii]]
+            else:
+                B0i = np.vstack([B0i, mode_params[ii - 1]])
         else:
             seed_row, found = residual_max_seed(
                 soph_win, model_soph[np.ix_(valid_y, valid_x)],
@@ -391,6 +399,8 @@ def fit_param_basis_axis(soph, x_bins, y_bins, opts: ParamBasisOpts,
                     ),
                 )
             B0i, LBi, UBi = last_B0i, last_LBi, last_UBi
+            if opts.kind == "phase" and ii <= n_wshed_modes:
+                valid_seed_modes[ii - 1] = False
             if ii > n_wshed_modes:
                 if verbose:
                     print("Additional modes will not improve fit. Terminating.")
