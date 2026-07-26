@@ -58,7 +58,7 @@ def test_pass2_spectrogram_bit_identical(segment_data, segment_out_compat):
 
     # Spectrogram power values — MATLAB stored as float32, ours computed as
     # float64. True bit-identity is blocked by FFT library choice: the
-    # DYNAM-O_dev Python submodule (and our wrapper) use Rust's RustFFT via the
+    # DYNAM-O sibling checkout (and our wrapper) use Rust's RustFFT via the
     # multitaper_rs kernel, while MATLAB uses its own FFT. Differences are
     # accumulated summation-order errors on the taper-weighted power sums and
     # empirically bound to max_rel ~= 5e-5 on this data. That's ~100x the

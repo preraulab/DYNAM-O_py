@@ -1,6 +1,6 @@
 """Parametric-basis fitting: model recovery and loop behaviour.
 
-Mirrors the intent of DYNAM-O_dev/tests/test_paramfit_model_recovery.m — build
+Mirrors the intent of DYNAM-O/tests/test_paramfit_model_recovery.m — build
 a SOPH from known modes, fit it, and check the recovered parameters. No MATLAB
 fixture needed, so these run anywhere dynamo_rs is built.
 """
@@ -496,7 +496,7 @@ def test_fused_and_assembled_extraction_agree_on_seeds():
 def test_gof_matches_the_selected_iteration_not_the_last():
     """After a revert, the returned gof must describe the returned params.
 
-    DYNAM-O_dev PR #79 fixed MATLAB to select `fitobj` and `gof` together.
+    DYNAM-O PR #79 fixed MATLAB to select `fitobj` and `gof` together.
     Keep the Python port on that same contract.
     """
     truth = np.array([[3.0, 13.5, 1.2, 10.0, 6.0, 0.0]])
