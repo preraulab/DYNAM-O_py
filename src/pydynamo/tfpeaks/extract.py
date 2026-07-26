@@ -450,7 +450,9 @@ def extract_tfpeaks(
         if not _HAS_FUSED:
             raise RuntimeError(
                 "use_fused=True but this dynamo_rs build has no "
-                "extract_tfpeaks; rebuild with --features python"
+                "extract_tfpeaks; rebuild the coordinated native extensions "
+                "with the DYNAM-O_toolbox controlled bootstrap "
+                "(`./bootstrap.sh --yes` or `bootstrap.ps1 -Yes`)"
             )
         return extract_tfpeaks_fused(
             spect, stimes, sfreqs, seg_time=seg_time,

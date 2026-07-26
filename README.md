@@ -76,68 +76,64 @@ Stage-by-stage verification:
 
 ## Install from scratch
 
+The supported native build path is the
+[`DYNAM-O_toolbox`](https://github.com/preraulab/DYNAM-O_toolbox) bootstrap.
+It synchronizes the coordinated repositories, builds the Rust CLI, MATLAB MEX
+files, and Python extensions with source-path remapping, and rejects native
+artifacts that contain build-machine paths.
+
 ### Prerequisites
 
+- **Git**
 - **Python ≥ 3.9**
+  On Apple Silicon, use a native arm64 interpreter; an x86_64 Python produces
+  x86_64 extensions that run under Rosetta. Check with
+  `python -c "import platform; print(platform.machine())"`.
 - **Rust toolchain** (`cargo`, `rustc`) — install via [rustup](https://rustup.rs/):
   ```bash
   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
   source "$HOME/.cargo/env"
   ```
-- **maturin** — builds the Rust extensions against CPython:
-  ```bash
-  pip install maturin
-  ```
-- **MATLAB is NOT required** to run the pipeline. It is only needed to
+- **MATLAB and a configured MEX C compiler** are required only for the
+  controlled native rebuild, because it also rebuilds DYNAM-O's MATLAB MEX
+  artifacts. MATLAB is not required to run pydynamo after installation. It is
+  otherwise needed only to
   regenerate ground-truth `.mat` intermediates under `data_cache/` (the
   `scripts/export_*.m` files). Accuracy benchmarking against MATLAB uses
   those exported files, which can be produced once and reused.
 
 ### Install
 
-Clone the three coordinated repositories beside one another. Each clone
-explicitly targets `master`, the supported integration branch.
+The bootstrap installs its pinned Maturin version into
+`DYNAM-O_py/.venv`; do not install or invoke Maturin separately to produce
+release artifacts.
+
+macOS, Linux, WSL, or Git-Bash:
 
 ```bash
-# Keep these three coordinated repositories beside one another. DYNAM-O_rs
-# resolves the multitaper Rust crate through this sibling layout, and pydynamo
-# imports the canonical Python wrapper from DYNAM-O.
-mkdir DYNAM-O-stack && cd DYNAM-O-stack
-git clone --branch master --single-branch \
-    git@github.com:preraulab/DYNAM-O.git DYNAM-O
-git -C DYNAM-O submodule update --init \
-    toolbox/helper_functions/multitaper_toolbox
-git clone --branch master --single-branch \
-    git@github.com:preraulab/DYNAM-O_rs.git DYNAM-O_rs
-git clone --branch master --single-branch \
-    git@github.com:preraulab/DYNAM-O_py.git DYNAM-O_py
-
-cd DYNAM-O_py
-
-# (recommended) fresh virtualenv. On Apple Silicon make sure this is a native
-# arm64 interpreter — an x86_64 Python builds x86_64 wheels that run under
-# Rosetta, which costs several-fold on exactly the kernels dynamo_rs exists to
-# speed up. Check with: python -c "import platform; print(platform.machine())"
-python -m venv .venv && source .venv/bin/activate
-python -m pip install --upgrade pip maturin
-
-# Build + install the multitaper extension first. DYNAM-O_rs consumes the same
-# local crate when it builds, while the DYNAM-O Python wrapper imports this
-# standalone extension at runtime.
-python -m maturin develop --release \
-    -m ../DYNAM-O/toolbox/helper_functions/multitaper_toolbox/rust/Cargo.toml
-
-# Build + install the DYNAM-O kernel from the sibling master checkout.
-python -m maturin develop --release --features python \
-    -m ../DYNAM-O_rs/rust/Cargo.toml
-
-# Install pydynamo and verify the sibling wrappers and native APIs.
-python -m pip install -e .
-python scripts/check_install.py
-
-# (optional) test dependencies
-python -m pip install -e '.[test]'
+git clone https://github.com/preraulab/DYNAM-O_toolbox.git
+cd DYNAM-O_toolbox
+./bootstrap.sh --yes
+source DYNAM-O_py/.venv/bin/activate
 ```
+
+Windows PowerShell:
+
+```powershell
+git clone https://github.com/preraulab/DYNAM-O_toolbox.git
+cd DYNAM-O_toolbox
+powershell -ExecutionPolicy Bypass -File .\bootstrap.ps1 -Yes
+.\DYNAM-O_py\.venv\Scripts\Activate.ps1
+```
+
+For optional test dependencies, run
+`python -m pip install -e '.[test]'` from `DYNAM-O_py` after activating that
+environment.
+
+The controlled workflow currently creates an editable pydynamo installation;
+it does not produce a standalone pydynamo or `dynamo_rs` wheel for
+distribution. Do not publish wheels produced through direct Maturin, pip, or
+other PEP 517 build commands as controlled release artifacts.
 
 Python runtime deps (installed automatically by `pip install -e .`):
 numpy ≥ 1.24, scipy ≥ 1.11, scikit-image ≥ 0.22, matplotlib ≥ 3.7, pandas ≥ 2.0,

@@ -100,9 +100,9 @@ def _fit_once(soph_win, x_win, y_win, B0, LB, UB, opts):
     dict from the Rust kernel."""
     if _rs is None:
         raise ImportError(
-            "dynamo_rs is required for parametric basis fitting; build it with "
-            "`maturin develop --release --features python -m "
-            "../DYNAM-O_rs/rust/Cargo.toml`"
+            "dynamo_rs is required for parametric basis fitting; rebuild the "
+            "coordinated native extensions with the DYNAM-O_toolbox controlled "
+            "bootstrap (`./bootstrap.sh --yes` or `bootstrap.ps1 -Yes`)"
         )
     # fit_rotGauss.m:111 — 5th percentile of the *windowed* histogram, using
     # MATLAB's prctile convention (see matlab_compat.prctile).

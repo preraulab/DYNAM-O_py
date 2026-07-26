@@ -10,14 +10,16 @@ def _require_module(name, required=()):
     except ImportError as exc:
         raise SystemExit(
             f"FAILED: could not import {name}: {exc}\n"
-            "Follow the sibling checkout and native build steps in README.md."
+            "Run the DYNAM-O_toolbox controlled native build "
+            "(`./bootstrap.sh --yes` or `bootstrap.ps1 -Yes`); see README.md."
         ) from exc
 
     missing = [attr for attr in required if not hasattr(module, attr)]
     if missing:
         raise SystemExit(
             f"FAILED: {name} is missing {', '.join(missing)}. "
-            "Rebuild it from the branch documented in README.md."
+            "Rerun the DYNAM-O_toolbox controlled native build "
+            "(`./bootstrap.sh --yes` or `bootstrap.ps1 -Yes`); see README.md."
         )
     return module
 
