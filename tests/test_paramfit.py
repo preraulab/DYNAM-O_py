@@ -5,6 +5,8 @@ a SOPH from known modes, fit it, and check the recovered parameters. No MATLAB
 fixture needed, so these run anywhere dynamo_rs is built.
 """
 
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 
@@ -14,6 +16,7 @@ from pydynamo.soph.paramfit import (
     select_iteration,
 )
 from pydynamo.soph.paramfit.matlab_compat import prctile
+from pydynamo.soph.paramfit.output import create_params_table
 
 dynamo_rs = pytest.importorskip("dynamo_rs")
 
@@ -376,6 +379,9 @@ def test_phase_watershed_is_periodic_across_seam(monkeypatch, center):
         background=np.array([0.0, 0.0, 0.01]),
     )
     captured = {}
+    captured_result = SimpleNamespace(
+        params_table=create_params_table(np.empty((0, 6)), "phase")
+    )
 
     def capture_fit(
         soph_arg, x_arg, y_arg, opts_arg, seed_modes=None, wshed_img=None,
@@ -384,7 +390,7 @@ def test_phase_watershed_is_periodic_across_seam(monkeypatch, center):
             soph=soph_arg, x=x_arg, y=y_arg, opts=opts_arg,
             seed_modes=seed_modes, wshed_img=wshed_img,
         )
-        return captured
+        return captured_result
 
     monkeypatch.setattr(core, "fit_param_basis_axis", capture_fit)
     opts = ParamBasisOpts.phase(
@@ -394,7 +400,7 @@ def test_phase_watershed_is_periodic_across_seam(monkeypatch, center):
 
     result = core.fit_param_basis(soph, phase_bins, freq_bins, opts)
 
-    assert result is captured
+    assert result is captured_result
     assert np.array_equal(captured["soph"], soph)
     assert captured["wshed_img"].shape == (
         freq_bins.size, 3 * phase_bins.size - 2,
