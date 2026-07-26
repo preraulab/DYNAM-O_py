@@ -33,8 +33,8 @@ import numpy as np
 import scipy.io as sio
 
 _TOOLBOX_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_SEGMENT_OUT = _TOOLBOX_ROOT / "DYNAM-O_dev" / "segment_out.mat"
-DEFAULT_EXAMPLE_DATA = _TOOLBOX_ROOT / "DYNAM-O_dev" / "example_data" / "example_data.mat"
+DEFAULT_SEGMENT_OUT = _TOOLBOX_ROOT / "DYNAM-O" / "segment_out.mat"
+DEFAULT_EXAMPLE_DATA = _TOOLBOX_ROOT / "DYNAM-O" / "example_data" / "example_data.mat"
 
 
 def load_segment_out(path: Path = DEFAULT_SEGMENT_OUT) -> dict[str, Any]:
