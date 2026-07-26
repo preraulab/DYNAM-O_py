@@ -1,8 +1,8 @@
 %EXPORT_MATLAB_GROUND_TRUTH Re-export DYNAM-O segment_out.mat for Python validation.
 %
-% Run this from MATLAB in the DYNAM-O_dev directory:
-%   cd ~/code/toolboxes/DYNAM-O_dev
-%   run('~/code/toolboxes/pydynamo/scripts/export_matlab_ground_truth.m')
+% Run this from MATLAB in the DYNAM-O directory:
+%   cd ~/code/toolboxes/DYNAM-O
+%   run('~/code/toolboxes/DYNAM-O_py/scripts/export_matlab_ground_truth.m')
 %
 % Why:
 %   `segment_out.mat` was saved with the full `runDYNAMO('segment')` output,
@@ -12,16 +12,16 @@
 %     - segment_stats.csv       (human-readable, all scalar/numeric columns)
 %     - segment_stats_struct.mat (table2struct, v7.3 so Python's h5py can read it)
 %
-% Outputs are written to ~/code/toolboxes/pydynamo/data_cache/
+% Outputs are written to ~/code/toolboxes/DYNAM-O_py/data_cache/
 
 clear; clc
 
-out_dir = fullfile(getenv('HOME'), 'code', 'toolboxes', 'pydynamo', 'data_cache');
+out_dir = fullfile(getenv('HOME'), 'code', 'toolboxes', 'DYNAM-O_py', 'data_cache');
 if ~exist(out_dir, 'dir')
     mkdir(out_dir);
 end
 
-in_path = fullfile(getenv('HOME'), 'code', 'toolboxes', 'DYNAM-O_dev', 'segment_out.mat');
+in_path = fullfile(getenv('HOME'), 'code', 'toolboxes', 'DYNAM-O', 'segment_out.mat');
 fprintf('Loading %s ...\n', in_path);
 S = load(in_path);
 

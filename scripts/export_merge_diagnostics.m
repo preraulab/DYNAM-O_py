@@ -3,8 +3,8 @@
 % on the segment dataset, which runs in ~45 s.
 %
 % Run from MATLAB:
-%   cd ~/code/toolboxes/DYNAM-O_dev
-%   run('~/code/toolboxes/pydynamo/scripts/export_merge_diagnostics.m')
+%   cd ~/code/toolboxes/DYNAM-O
+%   run('~/code/toolboxes/DYNAM-O_py/scripts/export_merge_diagnostics.m')
 %
 % Writes:
 %   data_cache/night_stats.csv                     (full MATLAB stats_table, night)
@@ -21,13 +21,13 @@
 
 clear; clc
 
-addpath(genpath(fullfile(getenv('HOME'), 'code', 'toolboxes', 'DYNAM-O_dev', 'toolbox')));
+addpath(genpath(fullfile(getenv('HOME'), 'code', 'toolboxes', 'DYNAM-O', 'toolbox')));
 
-out_dir = fullfile(getenv('HOME'), 'code', 'toolboxes', 'pydynamo', 'data_cache');
+out_dir = fullfile(getenv('HOME'), 'code', 'toolboxes', 'DYNAM-O_py', 'data_cache');
 if ~exist(out_dir, 'dir'); mkdir(out_dir); end
 
 % Load bundled example data (same path as export_bisect_intermediates.m)
-load(fullfile(getenv('HOME'), 'code', 'toolboxes', 'DYNAM-O_dev', ...
+load(fullfile(getenv('HOME'), 'code', 'toolboxes', 'DYNAM-O', ...
               'example_data', 'example_data.mat'));
 
 % Cast so DYNAM-O validators accept the inputs
