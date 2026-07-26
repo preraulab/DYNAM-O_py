@@ -1,13 +1,22 @@
 """Side-by-side: pyDYNAM-O's detect_tfpeaks vs my pydynamo pass-1 extract
 on the same 300-s segment. Share the exact same baseline-subtracted
 spectrogram so the only variable is the per-segment peak algorithm.
+
+Set ``PYDYNAMO_REFERENCE_ROOT`` to use a local pyDYNAM-O checkout instead
+of an installed ``dynam_o`` package.
 """
 
+import os
 import sys, time, warnings
+from pathlib import Path
+
 import skimage.graph, skimage.future
 sys.modules['skimage.future.graph'] = skimage.graph
 skimage.future.graph = skimage.graph
-sys.path.insert(0, '/Users/Mike/code/toolboxes/pyDYNAM-O')
+
+reference_root = os.environ.get("PYDYNAMO_REFERENCE_ROOT")
+if reference_root:
+    sys.path.insert(0, str(Path(reference_root).expanduser().resolve()))
 
 import numpy as np
 import pandas as pd
