@@ -95,6 +95,16 @@ class ParamBasisOpts:
             if not (is_bool or is_binary_number):
                 raise ValueError(f"{name} must be a binary scalar")
 
+        prob = self.peak_assign_prob
+        is_numeric = (
+            isinstance(prob, (int, float, np.integer, np.floating))
+            and not isinstance(prob, (bool, np.bool_))
+        )
+        if not (
+            is_numeric and np.isfinite(prob) and 0.0 < float(prob) < 1.0
+        ):
+            raise ValueError("peak_assign_prob must be in (0, 1)")
+
     @property
     def constrain_power_center(self):
         if self.kind != "power":
