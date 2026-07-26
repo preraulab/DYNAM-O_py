@@ -10,10 +10,50 @@ of samples agree). Small disagreement is expected from:
 
 import numpy as np
 
-from pydynamo.artifacts import detect_artifacts
+import pydynamo.artifacts as artifact_module
+from pydynamo.artifacts import _flat_mask, detect_artifacts
 
 
 SEGMENT_TIME_RANGE = (8420, 13446)
+
+
+def test_flat_mask_tolerance_uses_full_run_span():
+    # Adjacent differences are within tolerance, but the full span is not.
+    # MATLAB get_chunks therefore splits this sequence rather than accepting
+    # it as one near-flat run.
+    data = np.array([0.0, 0.009, 0.018])
+
+    assert not _flat_mask(data, min_run=3, tol=0.01).any()
+
+
+def test_flat_mask_does_not_flag_ordinary_varying_eeg():
+    rng = np.random.default_rng(0)
+    data = rng.normal(size=2_000)
+    flat_tol = 0.02 * np.std(data, ddof=1)
+
+    assert not _flat_mask(data, min_run=100, tol=flat_tol).any()
+
+
+def test_detect_artifacts_recovers_resampled_disconnection(monkeypatch):
+    rng = np.random.default_rng(1)
+    data = rng.normal(size=2_000)
+    disconnected = slice(800, 950)
+    data[disconnected] = np.linspace(-0.005, 0.005, 150)
+
+    def return_initial_mask(
+        data, fs, passband, crit, bad_inds, **kwargs
+    ):
+        return bad_inds.copy()
+
+    monkeypatch.setattr(
+        artifact_module, "_compute_band_artifacts", return_initial_mask
+    )
+
+    artifacts = detect_artifacts(data, 100.0, slope_test=False)
+
+    assert artifacts[disconnected].all()
+    assert not artifacts[:500].any()
+    assert not artifacts[1_200:].any()
 
 
 def test_artifacts_match_matlab(example_data, segment_out_compat):
