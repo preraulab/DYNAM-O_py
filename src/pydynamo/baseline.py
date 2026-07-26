@@ -12,11 +12,22 @@ the percentile.
 
 The MATLAB pipeline divides the spectrogram by the broadcast baseline
 (equivalent to dB-domain subtraction after 10*log10).
+
+Implementation: the hot path delegates to `dynamo_rs.compute_baseline`
+(Rust, Hyndman-Fan method #5). Python fallback preserved for environments
+without the Rust extension.
 """
 
 from __future__ import annotations
 
 import numpy as np
+
+try:
+    import dynamo_rs as _dynamo_rs
+    _HAS_RUST = True
+except ImportError:
+    _dynamo_rs = None
+    _HAS_RUST = False
 
 
 def compute_baseline(
@@ -43,19 +54,23 @@ def compute_baseline(
     -------
     baseline : (F, 1) array
     """
-    spect = np.asarray(spect)
-    stimes = np.asarray(stimes).ravel()
-    t_data = np.asarray(t_data).ravel()
-    baseline_exclude = np.asarray(baseline_exclude, dtype=bool).ravel()
+    spect = np.ascontiguousarray(np.asarray(spect, dtype=np.float64))
+    stimes = np.ascontiguousarray(np.asarray(stimes, dtype=np.float64).ravel())
+    t_data = np.ascontiguousarray(np.asarray(t_data, dtype=np.float64).ravel())
+    baseline_exclude = np.ascontiguousarray(
+        np.asarray(baseline_exclude, dtype=bool).ravel()
+    )
 
-    # Interpolate baseline_exclude onto stimes (nearest).
-    # MATLAB: interp1(t_time_range, single(baseline_exclude), stimes, 'nearest')
-    # Nearest-neighbor: find index in t_data closest to each stime.
-    # Since t_data is uniformly sampled, binary search works.
+    if _HAS_RUST:
+        return _dynamo_rs.compute_baseline(
+            spect, stimes, t_data, baseline_exclude,
+            baseline_range=(float(baseline_range[0]), float(baseline_range[1])),
+            baseline_ptile=float(baseline_ptile),
+        )
+
+    # ---- Python fallback (kept bit-equivalent to Rust for tests) ----
     idx = np.searchsorted(t_data, stimes)
     idx = np.clip(idx, 0, t_data.size - 1)
-    # Adjust for nearest (searchsorted gives the right-neighbor; compare the
-    # left side too)
     left = np.clip(idx - 1, 0, t_data.size - 1)
     use_left = np.abs(t_data[left] - stimes) < np.abs(t_data[idx] - stimes)
     idx = np.where(use_left, left, idx)
@@ -71,13 +86,9 @@ def compute_baseline(
 
     spect_bl = spect[:, valid].astype(np.float64, copy=True)
     spect_bl[spect_bl == 0] = np.nan
-
-    # MATLAB `prctile` uses Hyndman-Fan method #5 ("hazen"). numpy's default
-    # is "linear" (method #7) — which gives ~0.05% mismatch vs MATLAB on the
-    # 2nd percentile over ~100k samples. Use hazen to match exactly.
-    baseline = np.nanpercentile(spect_bl, baseline_ptile, axis=1,
-                                keepdims=True, method="hazen")
-    return baseline
+    # MATLAB `prctile` uses Hyndman-Fan method #5 ("hazen").
+    return np.nanpercentile(spect_bl, baseline_ptile, axis=1,
+                            keepdims=True, method="hazen")
 
 
 def subtract_baseline(spect: np.ndarray, baseline: np.ndarray) -> np.ndarray:
@@ -85,4 +96,8 @@ def subtract_baseline(spect: np.ndarray, baseline: np.ndarray) -> np.ndarray:
 
         spect_baseline = spect ./ baseline  % element-wise broadcast
     """
+    if _HAS_RUST:
+        spect = np.ascontiguousarray(np.asarray(spect, dtype=np.float64))
+        baseline = np.ascontiguousarray(np.asarray(baseline, dtype=np.float64))
+        return _dynamo_rs.subtract_baseline(spect, baseline)
     return spect / baseline

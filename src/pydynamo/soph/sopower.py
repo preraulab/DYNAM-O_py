@@ -8,8 +8,8 @@ MATLAB pipeline:
     4. Convert to dB: 10*log10(.)
     5. Interpolate stages (previous) onto window-center times
     6. Outlier: |z| >= 3 → NaN
-    7. Normalize (default 'p2shift1234'): subtract 2nd percentile of SO-power
-       over stages {1,2,3,4} (NREM+REM)
+    7. Normalize (default 'p2shift1234'): subtract the 2nd percentile over
+       stages {1,2,3,4}
     8. Upsample to EEG rate via linear interp, restore NaN at excluded times
 """
 
@@ -117,12 +117,20 @@ def compute_so_power(
         return SOpower_db_clean, SOpower_times, SOpower_stages, "nan", None
 
     # Normalization
-    m = re.match(r"^p(0*[0-9]|[1-9][0-9]|100)shift([1-5]+)$", norm_method)
+    norm_method_lower = norm_method.lower()
+    m = re.match(
+        r"^p(0*[0-9]|[1-9][0-9]|100)shift([1-5]+)$",
+        norm_method_lower,
+    )
     ptile = None
     in_range = (SOpower_times >= time_range[0]) & (SOpower_times <= time_range[1])
-    if m:
-        shift_ptile = float(m.group(1))
-        shift_stages = sorted({int(c) for c in m.group(2)}) or list(range(1, 5))
+    if norm_method_lower == "shift" or m:
+        if m:
+            shift_ptile = float(m.group(1))
+            shift_stages = sorted({int(c) for c in m.group(2)})
+        else:
+            shift_ptile = 2.0
+            shift_stages = list(range(1, 5))
         valid_stage = np.isin(SOpower_stages, shift_stages)
         sel = in_range & valid_stage
         if not sel.any():

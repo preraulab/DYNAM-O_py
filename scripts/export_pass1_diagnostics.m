@@ -3,7 +3,7 @@
 % (pydynamo mask covers 24% of pass-2 spect, MATLAB only 14%).
 %
 % Run from MATLAB:
-%   cd ../DYNAMO_dev
+%   cd ../DYNAM-O_dev
 %   run('../pydynamo/scripts/export_pass1_diagnostics.m')
 %
 % Writes:
@@ -19,10 +19,10 @@
 % Runtime ~90 s (pass-1 extract dominates).
 
 clear; clc
-addpath(genpath(fullfile(getenv('HOME'), 'code', 'toolboxes', 'DYNAMO_dev', 'toolbox')));
+addpath(genpath(fullfile(getenv('HOME'), 'code', 'toolboxes', 'DYNAM-O_dev', 'toolbox')));
 
 out_dir = fullfile(getenv('HOME'), 'code', 'toolboxes', 'pydynamo', 'data_cache');
-load(fullfile(getenv('HOME'), 'code', 'toolboxes', 'DYNAMO_dev', ...
+load(fullfile(getenv('HOME'), 'code', 'toolboxes', 'DYNAM-O_dev', ...
               'example_data', 'example_data.mat'));
 stage_vals  = double(stage_vals);
 stage_times = double(stage_times);

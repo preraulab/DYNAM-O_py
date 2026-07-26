@@ -6,8 +6,19 @@ import pytest
 def test_pydynamo_imports():
     import pydynamo
     assert pydynamo.__version__ == "0.1.0"
-    from pydynamo import run_dynamo, DetectionOpts, BaselineOpts, SOPHOpts
+    from pydynamo import (
+        BaselineOpts,
+        DetectionOpts,
+        SOPHOpts,
+        SplineBasisOpts,
+        SplineFitResult,
+        SplineObject,
+        run_dynamo,
+    )
     assert callable(run_dynamo)
+    assert SplineBasisOpts.power().num_knots_y == 18
+    assert SplineFitResult is not None
+    assert SplineObject is not None
     # DetectionOpts() should construct with defaults matching MATLAB 'default' preset.
     det = DetectionOpts()
     assert det.merge_thresh == 11.0

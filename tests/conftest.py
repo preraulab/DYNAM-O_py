@@ -54,9 +54,9 @@ def stats_table_matlab():
 
 @pytest.fixture(scope="session")
 def example_data():
-    """Load DYNAMO_dev/example_data/example_data.mat — the raw EEG input."""
+    """Load DYNAM-O_dev/example_data/example_data.mat — the raw EEG input."""
     import scipy.io as sio
-    path = Path("../DYNAMO_dev/example_data/example_data.mat")
+    path = Path(__file__).resolve().parents[2] / "DYNAM-O_dev" / "example_data" / "example_data.mat"
     if not path.exists():
         pytest.skip(f"{path} not found.")
     return sio.loadmat(str(path), simplify_cells=True)

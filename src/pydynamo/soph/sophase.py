@@ -23,15 +23,70 @@ we fall back to scipy iirdesign and warn.
 
 from __future__ import annotations
 
+import os
 import warnings
 from pathlib import Path
 
 import numpy as np
-from scipy.signal import hilbert, iirdesign, sosfiltfilt
+from scipy.signal import hilbert as _sp_hilbert, iirdesign, sosfiltfilt as _sp_sosfiltfilt
 from scipy.interpolate import interp1d
 
+# scipy's sosfiltfilt + hilbert are faster than our Rust port for single
+# signals (see scripts/bench_signal_rust_vs_scipy.py).  Rust wins for
+# unwrap (6x, bit-exact) so enable that specifically.
+_HAS_RUST_SIGNAL = False  # legacy; kept for backward-compat
+try:
+    import dynamo_rs as _dynamo_rs  # type: ignore
+    _HAS_RUST_MODULE = True
+except ImportError:
+    _dynamo_rs = None
+    _HAS_RUST_MODULE = False
 
-_FILTER_DIR = Path(__file__).parent.parent / "data_matlab_filters"
+_USE_RUST_SOSFILTFILT = False
+_USE_RUST_HILBERT = False
+_USE_RUST_UNWRAP = _HAS_RUST_MODULE  # rust 6x faster, bit-exact
+
+
+def _sosfiltfilt(sos, x):
+    if _USE_RUST_SOSFILTFILT and _HAS_RUST_MODULE:
+        return _dynamo_rs.sosfiltfilt(
+            np.ascontiguousarray(sos, np.float64),
+            np.ascontiguousarray(x, np.float64).ravel(),
+        )
+    return _sp_sosfiltfilt(sos, x)
+
+
+def _hilbert_analytic(x):
+    """Return complex analytic signal (like scipy.signal.hilbert)."""
+    if _USE_RUST_HILBERT and _HAS_RUST_MODULE:
+        re, im = _dynamo_rs.hilbert(np.ascontiguousarray(x, np.float64).ravel())
+        return re + 1j * im
+    return _sp_hilbert(x)
+
+
+def _unwrap(p):
+    if _USE_RUST_UNWRAP:
+        return _dynamo_rs.unwrap(np.ascontiguousarray(p, np.float64).ravel())
+    return np.unwrap(p)
+
+
+def _candidate_filter_dirs() -> list[Path]:
+    """Search order for the SOphase SOS cache. First hit wins.
+
+    1. $DYNAMO_FILTER_CACHE env var (absolute override)
+    2. Sibling DYNAM-O_rs checkout: ../../DYNAM-O_rs/data_matlab_filters/
+    3. In-package fallback: pydynamo/data_matlab_filters/ (for pip installs)
+    """
+    dirs: list[Path] = []
+    env = os.environ.get("DYNAMO_FILTER_CACHE")
+    if env:
+        dirs.append(Path(env))
+    # Sibling repo: DYNAM-O_rs next to DYNAM-O_py checkout (3 up from this file)
+    repo_root = Path(__file__).resolve().parents[3]  # .../pydynamo
+    dirs.append(repo_root.parent / "DYNAM-O_rs" / "data_matlab_filters")
+    # In-package fallback (shipped with the pip wheel if anyone regenerates)
+    dirs.append(Path(__file__).parent.parent / "data_matlab_filters")
+    return dirs
 
 
 def _matlab_sos_filename(fs: float, so_range: tuple[float, float]) -> str:
@@ -41,9 +96,11 @@ def _matlab_sos_filename(fs: float, so_range: tuple[float, float]) -> str:
 
 
 def _load_matlab_sos(fs: float, so_range: tuple[float, float]) -> np.ndarray | None:
-    path = _FILTER_DIR / _matlab_sos_filename(fs, so_range)
-    if path.exists():
-        return np.ascontiguousarray(np.load(path), dtype=np.float64)
+    name = _matlab_sos_filename(fs, so_range)
+    for d in _candidate_filter_dirs():
+        path = d / name
+        if path.exists():
+            return np.ascontiguousarray(np.load(path), dtype=np.float64)
     return None
 
 
@@ -65,11 +122,12 @@ def _get_sos(fs: float, so_range: tuple[float, float]) -> np.ndarray:
     sos = _load_matlab_sos(fs, so_range)
     if sos is not None:
         return sos
+    target = _candidate_filter_dirs()[0] / _matlab_sos_filename(fs, so_range)
     warnings.warn(
         f"No MATLAB-exact SOphase filter shipped for Fs={fs} SO_freqrange={so_range}; "
         f"falling back to scipy iirdesign (SOphase cos ~0.93 vs MATLAB). "
-        f"To fix: export MATLAB's filter SOS via scripts/export_bisect_intermediates.m "
-        f"and save to {_FILTER_DIR / _matlab_sos_filename(fs, so_range)}.",
+        f"To fix: design in MATLAB via DYNAM-O_rs/scripts/export_sophase_filters.m "
+        f"and save to {target}.",
         RuntimeWarning, stacklevel=3,
     )
     return _design_so_bandpass_scipy(fs, so_range)
@@ -118,9 +176,9 @@ def compute_so_phase(
     else:
         sos = _get_sos(fs, SO_freqrange)
 
-    filtdata = sosfiltfilt(sos, eeg)
-    analytic = hilbert(filtdata)
-    SOphase = np.unwrap(np.angle(analytic))
+    filtdata = _sosfiltfilt(sos, eeg)
+    analytic = _hilbert_analytic(filtdata)
+    SOphase = _unwrap(np.angle(analytic))
 
     filtdata_out = filtdata.copy()
     filtdata_out[isexcluded] = np.nan

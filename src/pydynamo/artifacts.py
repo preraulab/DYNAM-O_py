@@ -30,25 +30,89 @@ Masks from HF and BB bands are OR'd with `bad_inds` (flat runs + outlier noise).
 from __future__ import annotations
 
 import numpy as np
-from scipy.signal import cheby1, sosfiltfilt, hilbert
+from scipy.signal import cheby1, sosfiltfilt as _sp_sosfiltfilt, hilbert as _sp_hilbert
 from scipy.ndimage import median_filter
 
+# scipy's sosfiltfilt + hilbert are faster than our Rust port on single
+# long signals (scipy has SIMD-vectorized C kernels -- scipy beats Rust even
+# with rustfft's NEON default on Apple Silicon; see scripts/bench_signal_rust_vs_scipy.py).
+# We retain the Rust path only where we have parallelism across many signals
+# (e.g., refine).  However, Rust wins for movmean (3x vs vectorized numpy cumsum,
+# exact match) so we enable that specifically.
+_HAS_RUST_SIGNAL = False  # legacy; kept for backward-compat
+try:
+    import dynamo_rs as _dynamo_rs  # type: ignore
+    _HAS_RUST_MODULE = True
+except ImportError:
+    _dynamo_rs = None
+    _HAS_RUST_MODULE = False
 
-def _flat_mask(data: np.ndarray, min_run: int) -> np.ndarray:
-    """True where a sample sits inside a run of ≥ `min_run` identical values."""
+_USE_RUST_SOSFILTFILT = False   # scipy beats rust 2x
+_USE_RUST_HILBERT = False       # scipy beats rust 2.5x
+_USE_RUST_MOVMEAN = _HAS_RUST_MODULE  # rust 3x faster, bit-exact
+
+
+def _rust_sosfiltfilt(sos, x):
+    if _USE_RUST_SOSFILTFILT and _HAS_RUST_MODULE:
+        return _dynamo_rs.sosfiltfilt(
+            np.ascontiguousarray(sos, np.float64),
+            np.ascontiguousarray(x, np.float64).ravel(),
+        )
+    return _sp_sosfiltfilt(sos, x)
+
+
+def _rust_hilbert_envelope(x):
+    """|hilbert(x)| — the envelope. Returns real magnitude."""
+    x_arr = np.ascontiguousarray(x, np.float64).ravel()
+    if _USE_RUST_HILBERT and _HAS_RUST_MODULE:
+        re, im = _dynamo_rs.hilbert(x_arr)
+        return np.hypot(re, im)
+    return np.abs(_sp_hilbert(x_arr))
+
+
+def _rust_movmean(x, win):
+    if _USE_RUST_MOVMEAN and win > 1:
+        return _dynamo_rs.movmean(np.ascontiguousarray(x, np.float64).ravel(), int(win))
+    return None  # caller falls back to Python _movmean
+
+
+def _flat_mask(data: np.ndarray, min_run: int, tol: float = 0.0) -> np.ndarray:
+    """True inside runs whose full value span stays within ``tol``."""
     n = data.size
     if n == 0:
         return np.zeros(0, dtype=bool)
-    # Boundaries between equal-value runs
-    change = np.empty(n, dtype=bool)
-    change[0] = True
-    change[1:] = data[1:] != data[:-1]
-    run_starts = np.flatnonzero(change)
-    run_lengths = np.diff(np.append(run_starts, n))
+
     mask = np.zeros(n, dtype=bool)
-    for start, length in zip(run_starts, run_lengths):
-        if length >= min_run:
-            mask[start : start + length] = True
+    run_start = 0
+    run_min = float(data[0])
+    run_max = float(data[0])
+
+    for idx in range(1, n):
+        value = float(data[idx])
+        if tol == 0:
+            same = value == float(data[run_start]) or (
+                np.isnan(value) and np.isnan(data[run_start])
+            )
+        elif np.isfinite(value) and np.isfinite(run_min):
+            next_min = min(run_min, value)
+            next_max = max(run_max, value)
+            same = next_max - next_min <= tol
+        else:
+            same = False
+
+        if same:
+            run_min = min(run_min, value)
+            run_max = max(run_max, value)
+            continue
+
+        if idx - run_start >= min_run:
+            mask[run_start:idx] = True
+        run_start = idx
+        run_min = value
+        run_max = value
+
+    if n - run_start >= min_run:
+        mask[run_start:n] = True
     return mask
 
 
@@ -163,9 +227,11 @@ def _compute_band_artifacts(
     # designfilt('highpassiir', 'FilterOrder', 4, 'PassbandFrequency', pb,
     #            'PassbandRipple', 0.2, 'SampleRate', Fs)).
     sos = cheby1(4, 0.2, passband, btype="highpass", fs=fs, output="sos")
-    y = sosfiltfilt(sos, data)
-    y = np.abs(hilbert(y))
-    y = _movmean(y, int(round(smooth_duration * fs)))
+    y = _rust_sosfiltfilt(sos, data)
+    y = _rust_hilbert_envelope(y)
+    win_smooth = int(round(smooth_duration * fs))
+    y_rs = _rust_movmean(y, win_smooth)
+    y = y_rs if y_rs is not None else _movmean(y, win_smooth)
     # log (MATLAB: log = natural log)
     with np.errstate(divide="ignore", invalid="ignore"):
         y = np.log(y)
@@ -286,8 +352,16 @@ def detect_artifacts(
         isexcluded = np.asarray(isexcluded, dtype=bool).ravel()
         assert isexcluded.size == n, "isexcluded must match len(data)"
 
-    # Flat runs + outlier noise
-    flat = _flat_mask(data, int(round(fs)))  # ≥ 1 s of identical samples
+    # Flat runs + outlier noise. Resampling leaves small ringing in genuinely
+    # disconnected segments, so match MATLAB's tolerance of 2% of the finite
+    # signal's sample standard deviation instead of requiring bitwise equality.
+    finite_data = data[np.isfinite(data)]
+    flat_tol = (
+        0.02 * float(np.std(finite_data, ddof=1))
+        if finite_data.size > 1
+        else 0.0
+    )
+    flat = _flat_mask(data, int(round(fs)), flat_tol)
     bad = np.isnan(data) | np.isinf(data) | flat
     # Slope test (MATLAB default ON) — flag 1/f-violating windows.
     if slope_test:
