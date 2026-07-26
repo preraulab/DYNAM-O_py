@@ -356,7 +356,8 @@ def extract_tfpeaks_fused(
 
     Label images are restricted to rows in the returned table by default.
     `return_raw_labels=True` preserves the unfiltered Rust labels for the
-    internal pass-1 mask.
+    internal pass-1 mask. `HeightData` and `Boundaries` are object-valued
+    columns containing one variable-length NumPy array per peak.
     """
     if prom_min is None:
         prom_min = min_prominence(num_tapers_for_prom, 0.95)
@@ -384,13 +385,21 @@ def extract_tfpeaks_fused(
         float("-inf"), float("inf"),    # freq cuts: MATLAB passes [-inf inf]
         float("-inf"),                  # ht_db_min capped below, not in Rust
         0,                          # expand_labels_distance: MATLAB paint
-        False, False,               # height_data / boundaries: not needed
+        True, True,                 # MATLAB's default features='all'
     )
 
     df = pd.DataFrame({dst: np.asarray(res[src]).ravel()
                        for src, dst in _FUSED_COLS.items()})
     bbox = np.asarray(res["bbox"], dtype=float).reshape(-1, 4)
     df["BoundingBox"] = [tuple(r) for r in bbox]
+    df["HeightData"] = [
+        np.asarray(values, dtype=float).ravel()
+        for values in res["height_data"]
+    ]
+    df["Boundaries"] = [
+        np.asarray(values, dtype=float).reshape(-1, 2)
+        for values in res["boundaries"]
+    ]
     df.insert(0, "label", np.arange(1, len(df) + 1, dtype=np.int64))
 
     labels = np.asarray(res["labels"], dtype=np.int64)
