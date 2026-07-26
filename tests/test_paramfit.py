@@ -303,6 +303,49 @@ def test_phase_background_only_fit_keeps_unit_row_normalization():
     assert np.allclose(res.model_soph.sum(axis=1), 1.0, atol=1e-12)
 
 
+@pytest.mark.parametrize("center", [np.pi - 0.1, -np.pi + 0.1])
+def test_phase_watershed_is_periodic_across_seam(monkeypatch, center):
+    from pydynamo.soph.paramfit import core
+
+    phase_bins = np.linspace(-np.pi, np.pi, 81)
+    freq_bins = np.linspace(2.0, 18.0, 65)
+    truth = np.array([[0.08, 10.0, 1.4, center, 0.7, 0.0]])
+    soph = eval_modes(
+        truth, phase_bins, freq_bins, kind="phase",
+        background=np.array([0.0, 0.0, 0.01]),
+    )
+    captured = {}
+
+    def capture_fit(
+        soph_arg, x_arg, y_arg, opts_arg, seed_modes=None, wshed_img=None,
+    ):
+        captured.update(
+            soph=soph_arg, x=x_arg, y=y_arg, opts=opts_arg,
+            seed_modes=seed_modes, wshed_img=wshed_img,
+        )
+        return captured
+
+    monkeypatch.setattr(core, "fit_param_basis_axis", capture_fit)
+    opts = ParamBasisOpts.phase(
+        gauss_filt_std=(1.5, 1.5),
+        watershed_params=(np.nan, np.pi / 12, 0.5, 0.0, 0.7),
+    )
+
+    result = core.fit_param_basis(soph, phase_bins, freq_bins, opts)
+
+    assert result is captured
+    assert np.array_equal(captured["soph"], soph)
+    assert captured["wshed_img"].shape == (
+        freq_bins.size, 3 * phase_bins.size - 2,
+    )
+    assert captured["seed_modes"].shape == (1, 6)
+    phase_error = np.arctan2(
+        np.sin(captured["seed_modes"][0, 3] - center),
+        np.cos(captured["seed_modes"][0, 3] - center),
+    )
+    assert abs(phase_error) < 0.05
+
+
 def test_fused_and_assembled_extraction_agree_on_seeds():
     """The fused kernel is the seeding path of record.
 
