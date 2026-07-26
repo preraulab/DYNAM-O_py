@@ -11,7 +11,8 @@ Matches DYNAM-O_dev's computeTFPeaks flow:
   8. Assign per-peak Stage, SO-power, SO-phase
   9. SO-power + SO-phase histograms
  10. Parametric-basis fits
- 11. Summary plot
+ 11. Spline-basis fits
+ 12. Summary plot
 """
 
 from __future__ import annotations
@@ -46,6 +47,11 @@ from pydynamo.soph.paramfit import (
     ParamBasisOpts,
     ParamFitResult,
     fit_param_basis as _fit_param_basis,
+)
+from pydynamo.soph.splinefit import (
+    SplineBasisOpts,
+    SplineFitResult,
+    fit_spline_basis as _fit_spline_basis,
 )
 from pydynamo.soph.sophase import compute_so_phase
 from pydynamo.soph.sopower import compute_so_power
@@ -137,6 +143,8 @@ class SOPHsResult:
     SOphase_times: np.ndarray
     SOpower_paramfit: ParamFitResult | None = None
     SOphase_paramfit: ParamFitResult | None = None
+    SOpower_splinefit: SplineFitResult | None = None
+    SOphase_splinefit: SplineFitResult | None = None
 
 
 @dataclass
@@ -162,7 +170,10 @@ def run_dynamo(
     soph_opts: SOPHOpts | None = None,
     param_basis_power_opts: ParamBasisOpts | None = None,
     param_basis_phase_opts: ParamBasisOpts | None = None,
+    spline_basis_power_opts: SplineBasisOpts | None = None,
+    spline_basis_phase_opts: SplineBasisOpts | None = None,
     fit_param_basis: bool = True,
+    fit_spline_basis: bool = True,
     time_range: tuple[float, float] | None = None,
     plot: bool = True,
     verbose: bool = True,
@@ -181,9 +192,9 @@ def run_dynamo(
 
     Stage convention (DYNAM-O): 1=N3, 2=N2, 3=N1, 4=REM, 5=Wake.
 
-    Options mirror the MATLAB `runDYNAMO` option structs. Parametric fitting
-    runs by default; pass `fit_param_basis=False` to return only the raw SOPH
-    histograms.
+    Options mirror the MATLAB `runDYNAMO` option structs. Parametric and spline
+    fitting run by default; pass the corresponding ``fit_*_basis=False`` flag
+    to skip either fit family.
     """
     det = detection_opts if detection_opts is not None else DetectionOpts()
     base = baseline_opts if baseline_opts is not None else BaselineOpts()
@@ -498,6 +509,36 @@ def run_dynamo(
                     RuntimeWarning,
                     stacklevel=2,
                 )
+
+    if fit_spline_basis:
+        if verbose:
+            print("[dynamo] fitting spline basis...")
+        with _timer(timings, "fit_spline_basis"):
+            # Match fitSplineBasis.m: power and phase fail independently.
+            if np.isfinite(sophs.SOpower_mat).any():
+                try:
+                    sophs.SOpower_splinefit = _fit_spline_basis(
+                        sophs.SOpower_mat, sophs.SOpower_bins, sophs.freq_bins,
+                        opts=spline_basis_power_opts, kind="power",
+                    )
+                except Exception as exc:
+                    warnings.warn(
+                        f"SO-power spline fit failed: {exc}",
+                        RuntimeWarning,
+                        stacklevel=2,
+                    )
+            if np.isfinite(sophs.SOphase_mat).any():
+                try:
+                    sophs.SOphase_splinefit = _fit_spline_basis(
+                        sophs.SOphase_mat, sophs.SOphase_bins, sophs.freq_bins,
+                        opts=spline_basis_phase_opts, kind="phase",
+                    )
+                except Exception as exc:
+                    warnings.warn(
+                        f"SO-phase spline fit failed: {exc}",
+                        RuntimeWarning,
+                        stacklevel=2,
+                    )
 
     fig = None
     if plot:
