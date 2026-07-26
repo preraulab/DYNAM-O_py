@@ -68,6 +68,18 @@ def test_end_to_end_segment(example_data, tmp_path):
         out.SOPHs.SOpower_mat.T.shape
     assert out.SOPHs.SOphase_paramfit.model_soph.shape == \
         out.SOPHs.SOphase_mat.T.shape
+    assert tuple(out.SOPHs.SOpower_paramfit.params_table.columns) == (
+        "Density", "FreqMean", "FreqStd", "SOpowerMean", "SOpowerStd",
+        "Theta", "Volume", "PrefPhase", "Coupling", "PkCount", "PkFreq",
+        "PkDuration", "PkBandwidth", "PkHeight", "PkVolume", "PkArea",
+        "PkPeakiness", "PkSOpower", "PkSOphase",
+    )
+    assert tuple(out.SOPHs.SOphase_paramfit.params_table.columns) == (
+        "Density", "FreqMean", "FreqStd", "SOphaseMean", "SOphaseStd",
+        "Theta", "Volume", "PkCount", "PkFreq", "PkDuration", "PkBandwidth",
+        "PkHeight", "PkVolume", "PkArea", "PkPeakiness", "PkSOpower",
+        "PkSOphase",
+    )
     assert "fit_param_basis" in out.timings
 
     # The frequency axis is the SOPH histogram range (2-18 Hz by default), not

@@ -190,7 +190,14 @@ out = run_dynamo(
 )
 print(out.stats_table.head())       # per-peak stats
 print(out.SOPHs.SOpower_mat.shape)  # (freq_bins, SOpower_bins)
+print(out.SOPHs.SOpower_paramfit.params_table)
 ```
+
+Each parametric-fit result keeps the legacy numeric `params` array and also
+provides `params_table`, a pandas DataFrame with MATLAB-compatible named
+columns such as `Volume`, power-mode `PrefPhase`/`Coupling`, and the per-mode
+`Pk*` TF-peak summaries. Zero-mode fits retain the same named columns with no
+rows.
 
 ## Stage convention
 

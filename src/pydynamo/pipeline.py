@@ -457,6 +457,7 @@ def run_dynamo(
         "SO-power and SO-phase histograms included different TF peaks."
     )
     peak_selection_inds = power_peak_selection
+    stats_table_soph = stats.loc[peak_selection_inds]
 
     sophs = SOPHsResult(
         SOpower_mat=sopow["c_mat"], SOphase_mat=sopha["c_mat"],
@@ -480,6 +481,7 @@ def run_dynamo(
                 sophs.SOphase_paramfit = _fit_param_basis(
                     sophs.SOphase_mat, sophs.SOphase_bins, sophs.freq_bins,
                     opts=param_basis_phase_opts, kind="phase",
+                    stats_table_soph=stats_table_soph,
                 )
             except Exception as exc:
                 warnings.warn(
@@ -491,6 +493,12 @@ def run_dynamo(
                 sophs.SOpower_paramfit = _fit_param_basis(
                     sophs.SOpower_mat, sophs.SOpower_bins, sophs.freq_bins,
                     opts=param_basis_power_opts, kind="power",
+                    stats_table_soph=stats_table_soph,
+                    phase_model_soph=(
+                        sophs.SOphase_paramfit.model_soph
+                        if sophs.SOphase_paramfit is not None else None
+                    ),
+                    phase_bins=sophs.SOphase_bins,
                 )
             except Exception as exc:
                 warnings.warn(
