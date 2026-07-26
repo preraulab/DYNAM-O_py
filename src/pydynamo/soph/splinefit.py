@@ -176,8 +176,9 @@ def fit_spline_basis(
     if _rs is None or not hasattr(_rs, "fit_tensor_product_spline"):
         raise ImportError(
             "dynamo_rs with fit_tensor_product_spline is required for spline "
-            "basis fitting; rebuild it with `maturin develop --release "
-            "--features python -m ../DYNAM-O_rs/rust/Cargo.toml`"
+            "basis fitting; rebuild the coordinated native extensions with the "
+            "DYNAM-O_toolbox controlled bootstrap (`./bootstrap.sh --yes` or "
+            "`bootstrap.ps1 -Yes`)"
         )
 
     feature_bins = _as_axis(feature_bins, "feature_bins")
