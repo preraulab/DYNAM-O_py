@@ -287,7 +287,7 @@ def run_dynamo_fork(
             stage_times, stage_vals, stats, sophs,
             data=data_tr, fs=fs, time_range=time_range,
             freq_limits=(2.0, 25.0), mtm_freq_range=(2.0, 25.0),
-            hist_peakidx=peak_selection_inds,
+            hist_peakidx=peak_selection_inds, SOPH_stages=soph_stages,
         )
 
     return DynamoOutput(

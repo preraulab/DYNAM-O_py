@@ -14,6 +14,13 @@ from typing import Literal
 
 import numpy as np
 
+try:
+    import dynamo_rs as _dynamo_rs
+    _HAS_RUST = hasattr(_dynamo_rs, "tfpeak_histogram")
+except ImportError:
+    _dynamo_rs = None
+    _HAS_RUST = False
+
 
 BinMethod = Literal["full", "partial", "extend", "full_extend", "full extend"]
 
@@ -112,6 +119,33 @@ def tfpeak_histogram(
     num_fbins = freq_cbins.size
     num_cbins = c_cbins.size
 
+    # ---- Rust fast path ---------------------------------------------------
+    if _HAS_RUST:
+        cm = np.ascontiguousarray(c_metric, dtype=np.float64)
+        cs = np.ascontiguousarray(np.asarray(c_stages, dtype=float), dtype=np.float64)
+        cv = np.ascontiguousarray(c_valid, dtype=bool)
+        cva = np.ascontiguousarray(c_valid_allstages, dtype=bool)
+        pf = np.ascontiguousarray(peak_freqs, dtype=np.float64)
+        pc = np.ascontiguousarray(peak_c, dtype=np.float64)
+        fe = np.ascontiguousarray(freq_edges, dtype=np.float64)
+        ce = np.ascontiguousarray(c_edges, dtype=np.float64)
+        out = _dynamo_rs.tfpeak_histogram(
+            cm, cs, float(c_dt), cv, cva, pf, pc, fe, ce,
+            bool(circular),
+            (float(circular_bounds[0]), float(circular_bounds[1])),
+            int(norm_dim), bool(compute_rate),
+            float(min_time_in_bin), int(min_peak_at_freq),
+        )
+        return {
+            "c_mat": out["c_mat"],
+            "freq_cbins": freq_cbins,
+            "c_cbins": c_cbins,
+            "time_in_bin": out["time_in_bin"],
+            "prop_in_bin": out["prop_in_bin"],
+            "peak_at_freq": out["peak_at_freq"],
+        }
+    # ---- Python fallback --------------------------------------------------
+
     # [N_peaks × num_fbins] mask: peak p in freq bin f?
     pf = peak_freqs[:, None]
     all_infreqbin = (pf >= freq_edges[0][None, :]) & (pf < freq_edges[1][None, :])
@@ -120,14 +154,11 @@ def tfpeak_histogram(
     time_in_bin = np.zeros((num_cbins, 5), dtype=float)
     prop_in_bin = np.zeros((num_cbins, 5), dtype=float)
 
-    compute_tib = compute_rate or (min_time_in_bin > 0)
-
     # Precompute per-stage validity: (N_times, 5) logical.
     # Stages are labelled 1..5 per DYNAM-O convention.
-    if compute_tib:
-        stage_valid_masks = np.zeros((c_stages.size, 5), dtype=bool)
-        for k in range(1, 6):
-            stage_valid_masks[:, k - 1] = (c_stages == k) & c_valid
+    stage_valid_masks = np.zeros((c_stages.size, 5), dtype=bool)
+    for k in range(1, 6):
+        stage_valid_masks[:, k - 1] = (c_stages == k) & c_valid
 
     low_b, high_b = float(circular_bounds[0]), float(circular_bounds[1])
     crange = high_b - low_b
@@ -147,16 +178,19 @@ def tfpeak_histogram(
             tib_inds = (c_metric >= lo_e) & (c_metric < hi_e)
             inc_inds = (peak_c >= lo_e) & (peak_c < hi_e)
 
-        if compute_tib:
-            # minutes per stage
-            # (N,5) & (N,1) → (N,5); sum along axis=0; * dt / 60
-            tib_per_stage = np.sum(tib_inds[:, None] & stage_valid_masks, axis=0) * c_dt / 60.0
-            time_in_bin[s, :] = tib_per_stage
-            tib_allstages = np.sum(tib_inds & c_valid_allstages) * c_dt / 60.0
-            if tib_allstages > 0:
-                prop_in_bin[s, :] = tib_per_stage / tib_allstages
-            if tib_per_stage.sum() < min_time_in_bin:
-                continue
+        # minutes per stage
+        # (N,5) & (N,1) → (N,5); sum along axis=0; * dt / 60
+        tib_per_stage = np.sum(
+            tib_inds[:, None] & stage_valid_masks, axis=0,
+        ) * c_dt / 60.0
+        time_in_bin[s, :] = tib_per_stage
+        tib_allstages = (
+            np.sum(tib_inds & c_valid_allstages) * c_dt / 60.0
+        )
+        if tib_allstages > 0:
+            prop_in_bin[s, :] = tib_per_stage / tib_allstages
+        if min_time_in_bin > 0 and tib_per_stage.sum() < min_time_in_bin:
+            continue
 
         if inc_inds.any():
             counts = np.sum(inc_inds[:, None] & all_infreqbin, axis=0).astype(float)
