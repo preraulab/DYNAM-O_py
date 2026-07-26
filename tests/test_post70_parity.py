@@ -195,12 +195,20 @@ def test_shift_method_controls_stages_and_preserves_real_stage_labels(
             np.ones(4), 1.0, norm_method="p50shift25", **kwargs,
         )
     )
+    bare_shift, _, _, _, bare_shift_ptile = compute_so_power(
+        np.ones(4), 1.0, norm_method="shift", **kwargs,
+    )
+    explicit_default, _, _, _, explicit_default_ptile = compute_so_power(
+        np.ones(4), 1.0, norm_method="p2shift1234", **kwargs,
+    )
 
     assert np.array_equal(stages, [5.0, 5.0, 2.0, 2.0])
     assert np.array_equal(stages_with_wake, stages)
     assert stage2_ptile == pytest.approx(15.0)
     assert stage2_and_wake_ptile == pytest.approx(5.0)
     assert np.allclose(stage2_and_wake - stage2, 10.0)
+    assert bare_shift_ptile == pytest.approx(explicit_default_ptile)
+    assert np.allclose(bare_shift, explicit_default)
 
 
 @pytest.mark.parametrize(
