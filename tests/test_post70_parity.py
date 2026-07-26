@@ -1,4 +1,4 @@
-"""Regressions for MATLAB DYNAM-O_dev PRs 71, 73, 74, and 75."""
+"""Regressions for MATLAB DYNAM-O_dev PRs 71, 73, 74, 75, and 80."""
 
 from types import SimpleNamespace
 
@@ -7,11 +7,16 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from pydynamo.defaults import SOPHOpts
 from pydynamo.plot import summary_plot
 from pydynamo.soph.paramfit import core
 from pydynamo.soph.paramfit.basis import eval_modes, vm_gauss
 from pydynamo.soph.paramfit.opts import ParamBasisOpts, resolve_bounds
 from pydynamo.soph.sopower import compute_so_power
+
+
+def test_pipeline_default_sopower_norm_method_is_stage_aware():
+    assert SOPHOpts().SOpower_norm_method == "p2shift1234"
 
 
 def test_vm_gauss_frequency_width_is_standard_deviation():
@@ -158,7 +163,9 @@ def test_phase_background_only_uses_matlab_empty_mode_bounds(monkeypatch):
     assert np.array_equal(captured["upper"], [1.0, 1.0, 6.0])
 
 
-def test_all_stage_shift_preserves_real_stage_labels(monkeypatch):
+def test_shift_method_controls_stages_and_preserves_real_stage_labels(
+    monkeypatch,
+):
     import pydynamo.soph.sopower as sopower_module
 
     db_values = np.array([0.0, 0.0, 10.0, 20.0])
@@ -177,22 +184,23 @@ def test_all_stage_shift_preserves_real_stage_labels(monkeypatch):
         "stage_vals": np.array([5.0, 2.0, 2.0]),
         "eeg_times": np.arange(4, dtype=float),
         "time_range": (0.0, 3.0),
-        "norm_method": "p50shift2",
         "retain_Fs": False,
     }
 
-    all_stage, _, stages, _, all_ptile = compute_so_power(
-        np.ones(4), 1.0, shift_uses_stages=False, **kwargs,
+    stage2, _, stages, _, stage2_ptile = compute_so_power(
+        np.ones(4), 1.0, norm_method="p50shift2", **kwargs,
     )
-    stage_only, _, stages_restricted, _, stage_ptile = compute_so_power(
-        np.ones(4), 1.0, shift_uses_stages=True, **kwargs,
+    stage2_and_wake, _, stages_with_wake, _, stage2_and_wake_ptile = (
+        compute_so_power(
+            np.ones(4), 1.0, norm_method="p50shift25", **kwargs,
+        )
     )
 
     assert np.array_equal(stages, [5.0, 5.0, 2.0, 2.0])
-    assert np.array_equal(stages_restricted, stages)
-    assert all_ptile == pytest.approx(5.0)
-    assert stage_ptile == pytest.approx(15.0)
-    assert np.allclose(all_stage - stage_only, 10.0)
+    assert np.array_equal(stages_with_wake, stages)
+    assert stage2_ptile == pytest.approx(15.0)
+    assert stage2_and_wake_ptile == pytest.approx(5.0)
+    assert np.allclose(stage2_and_wake - stage2, 10.0)
 
 
 @pytest.mark.parametrize(

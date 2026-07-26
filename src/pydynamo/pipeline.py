@@ -367,7 +367,6 @@ def run_dynamo(
             window_params=soph.SOpower_window_params,
             SOpower_outlier_threshold=soph.SOpower_outlier_threshold,
             norm_method=soph.SOpower_norm_method,
-            shift_uses_stages=soph.SOpower_peak_shift_uses_stages,
             retain_Fs=soph.SOpower_retain_Fs,
         )
         if not stats.empty:

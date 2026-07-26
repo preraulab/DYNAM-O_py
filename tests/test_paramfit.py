@@ -393,9 +393,3 @@ def test_gof_matches_the_selected_iteration_not_the_last():
     if res.fit_iteration and res.iter_rsquared:
         want = res.iter_rsquared[res.iter_numbers.index(res.fit_iteration)]
         assert res.gof["adjrsquare"] == pytest.approx(want, rel=1e-12)
-
-
-def test_pipeline_defaults_to_matlab_all_stage_sopower_shift():
-    from pydynamo.defaults import SOPHOpts
-
-    assert SOPHOpts().SOpower_peak_shift_uses_stages is False
