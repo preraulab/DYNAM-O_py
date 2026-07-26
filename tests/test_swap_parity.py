@@ -314,7 +314,7 @@ def test_swap4_refine_parity(bisect_segment):
     finally:
         _refmod._HAS_RUST = saved
 
-    # Align by PeakTime (both paths may drop edge-rejected events).
+    # Align by PeakTime; frequency-boundary rejection can still drop events.
     merged = out_rs.merge(
         out_py, on="PeakTime", suffixes=("_rs", "_py"), how="inner"
     )

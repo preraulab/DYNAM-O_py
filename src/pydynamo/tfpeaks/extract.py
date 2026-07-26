@@ -192,8 +192,8 @@ def extract_tfpeaks_segment(
         labels_full = labels_merged
 
     # 6a) Pre-trim dur/bw filter (MATLAB extractTFPeaks.m:300-307). MATLAB
-    # drops ~57% of merged regions here before trim runs, using
-    # (max_idx - min_idx)*dt > dur_min — i.e. (N_pixels - 1)*dt.
+    # drops ~57% of merged regions here before trim runs, using the inclusive
+    # N_pixels * step span reported as Duration/Bandwidth.
     # Dropping small regions before trim both changes the final peak count
     # (because trim can create spurious sub-regions from jagged bboxes)
     # AND skips trim's per-region work on regions we'd reject anyway.
@@ -202,8 +202,8 @@ def extract_tfpeaks_segment(
         drop_labels = []
         for p in pre_props:
             minr, minc, maxr, maxc = p.bbox
-            pre_dur = (maxc - minc - 1) * d_time
-            pre_bw = (maxr - minr - 1) * d_freq
+            pre_dur = (maxc - minc) * d_time
+            pre_bw = (maxr - minr) * d_freq
             if not (pre_dur > dur_min and pre_bw > bw_min):
                 drop_labels.append(p.label)
         if drop_labels:
@@ -286,16 +286,12 @@ def extract_tfpeaks_segment(
             props["Volume"].to_numpy()
         props["Peakiness"] = np.where(ratio > 0.0, 10.0 * np.log10(ratio), np.nan)
 
-    # MATLAB extractTFPeaks.m:304/336/355 filter uses
-    #   (max(x) - min(x)) * dt > dur_min
-    # where (max-min) = N_pixels - 1. Reported Duration = N_pixels * dt.
-    # So the filter value is (Duration - d_time). Same for Bandwidth.
-    # filterStatsTable.m:78-81 uses Duration > dur_min (less strict by 1
-    # pixel), but the internal extractTFPeaks filter is the governing one.
+    # Current MATLAB and Rust use the same inclusive N_pixels * step span for
+    # filtering and for the reported Duration/Bandwidth values.
     prom_ok = np.isnan(props["Prominence_dB"].to_numpy()) | \
               (props["Prominence_dB"].to_numpy() > prom_min)
-    filter_dur = props["Duration"].to_numpy() - d_time
-    filter_bw = props["Bandwidth"].to_numpy() - d_freq
+    filter_dur = props["Duration"].to_numpy()
+    filter_bw = props["Bandwidth"].to_numpy()
     props = props[
         (filter_dur > dur_min) & (props["Duration"] < dur_max) &
         (filter_bw > bw_min) & (props["Bandwidth"] < bw_max) &

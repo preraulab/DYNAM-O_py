@@ -10,7 +10,7 @@ Default params mirror MATLAB:
     window_size = 4.0 s
     dsfreqs = 0.05 Hz  → nfft = 2**nextpow2(Fs/dsfreqs)
     detrend_opt = 'constant'
-    refine_method = 'spline_interp'  (1000-point grid + natural cubic spline)
+    refine_method = 'spline_interp'  (1000-point grid + cubic spline)
 """
 
 from __future__ import annotations
@@ -132,7 +132,6 @@ def refine_peak_frequency(
     half = window_size / 2.0
     keep = (event_times > t[0] + half) & (event_times < t[-1] - half)
     if not keep.any():
-        stats["PeakFrequency"] = np.nan
         return stats
 
     spect, sfreqs = _hann_event_spectra(
@@ -141,7 +140,12 @@ def refine_peak_frequency(
         dsfreqs=dsfreqs, detrend_opt="constant",
     )
 
+    # Peaks too close to the data boundaries cannot support a full Hann
+    # window. MATLAB and the Rust C API retain only those original frequencies;
+    # interior peaks remain invalid unless refinement succeeds.
+    original = stats["PeakFrequency"].to_numpy(dtype=float)
     refined = np.full(event_times.size, np.nan, dtype=float)
+    refined[~keep] = original[~keep]
 
     if _HAS_RUST and refine_method == "spline_interp":
         # Run the per-event spline+argmax loop in Rust (rayon-parallel).
