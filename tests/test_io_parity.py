@@ -1,22 +1,33 @@
 """Parity / smoke test for the Rust read_EDF + read_staging port.
 
-Uses real test data at /Users/Mike/Desktop/testdata/. Skipped if absent.
+Set ``DYNAMO_IO_TEST_EDF`` and ``DYNAMO_IO_TEST_STAGING`` to real test
+files. This opt-in parity module is skipped when either is unavailable.
 """
 
 from __future__ import annotations
 
+import os
 import time
 from pathlib import Path
+from typing import Optional
 
 import numpy as np
 import pytest
 
-EDF_PATH = Path("/Users/Mike/Desktop/testdata/TS00304 baseline.edf")
-STAGING_PATH = Path("/Users/Mike/Desktop/testdata/TS00304 baseline psg.csv")
+def _optional_path(variable: str) -> Optional[Path]:
+    value = os.environ.get(variable)
+    return Path(value).expanduser() if value else None
+
+
+EDF_PATH = _optional_path("DYNAMO_IO_TEST_EDF")
+STAGING_PATH = _optional_path("DYNAMO_IO_TEST_STAGING")
 
 pytestmark = pytest.mark.skipif(
-    not EDF_PATH.exists() or not STAGING_PATH.exists(),
-    reason="test data not present at /Users/Mike/Desktop/testdata",
+    EDF_PATH is None
+    or STAGING_PATH is None
+    or not EDF_PATH.exists()
+    or not STAGING_PATH.exists(),
+    reason="set DYNAMO_IO_TEST_EDF and DYNAMO_IO_TEST_STAGING to available files",
 )
 
 
@@ -108,9 +119,15 @@ def test_staging_epoch_number_mode(tmp_path):
 
 def test_matlab_cache_parity_if_available():
     """If a cached MATLAB .mat with the EDF read / staging is in data_cache/, compare."""
-    import glob, os
+    import glob
 
-    candidates = glob.glob(os.path.expanduser("~/code/toolboxes/DYNAM-O_rs/data_cache/**/*.mat"), recursive=True)
+    cache_root = os.environ.get("DYNAMO_MATLAB_CACHE")
+    if not cache_root:
+        pytest.skip("set DYNAMO_MATLAB_CACHE to a MATLAB cache directory")
+    candidates = glob.glob(
+        str(Path(cache_root).expanduser() / "**" / "*.mat"),
+        recursive=True,
+    )
     if not candidates:
         pytest.skip("no data_cache/*.mat available for bit-parity comparison")
     # No well-known filename convention for read_edf output; just note files.
