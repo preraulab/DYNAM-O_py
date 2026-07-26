@@ -76,21 +76,43 @@ def _rust_movmean(x, win):
     return None  # caller falls back to Python _movmean
 
 
-def _flat_mask(data: np.ndarray, min_run: int) -> np.ndarray:
-    """True where a sample sits inside a run of ≥ `min_run` identical values."""
+def _flat_mask(data: np.ndarray, min_run: int, tol: float = 0.0) -> np.ndarray:
+    """True inside runs whose full value span stays within ``tol``."""
     n = data.size
     if n == 0:
         return np.zeros(0, dtype=bool)
-    # Boundaries between equal-value runs
-    change = np.empty(n, dtype=bool)
-    change[0] = True
-    change[1:] = data[1:] != data[:-1]
-    run_starts = np.flatnonzero(change)
-    run_lengths = np.diff(np.append(run_starts, n))
+
     mask = np.zeros(n, dtype=bool)
-    for start, length in zip(run_starts, run_lengths):
-        if length >= min_run:
-            mask[start : start + length] = True
+    run_start = 0
+    run_min = float(data[0])
+    run_max = float(data[0])
+
+    for idx in range(1, n):
+        value = float(data[idx])
+        if tol == 0:
+            same = value == float(data[run_start]) or (
+                np.isnan(value) and np.isnan(data[run_start])
+            )
+        elif np.isfinite(value) and np.isfinite(run_min):
+            next_min = min(run_min, value)
+            next_max = max(run_max, value)
+            same = next_max - next_min <= tol
+        else:
+            same = False
+
+        if same:
+            run_min = min(run_min, value)
+            run_max = max(run_max, value)
+            continue
+
+        if idx - run_start >= min_run:
+            mask[run_start:idx] = True
+        run_start = idx
+        run_min = value
+        run_max = value
+
+    if n - run_start >= min_run:
+        mask[run_start:n] = True
     return mask
 
 
@@ -330,8 +352,16 @@ def detect_artifacts(
         isexcluded = np.asarray(isexcluded, dtype=bool).ravel()
         assert isexcluded.size == n, "isexcluded must match len(data)"
 
-    # Flat runs + outlier noise
-    flat = _flat_mask(data, int(round(fs)))  # ≥ 1 s of identical samples
+    # Flat runs + outlier noise. Resampling leaves small ringing in genuinely
+    # disconnected segments, so match MATLAB's tolerance of 2% of the finite
+    # signal's sample standard deviation instead of requiring bitwise equality.
+    finite_data = data[np.isfinite(data)]
+    flat_tol = (
+        0.02 * float(np.std(finite_data, ddof=1))
+        if finite_data.size > 1
+        else 0.0
+    )
+    flat = _flat_mask(data, int(round(fs)), flat_tol)
     bad = np.isnan(data) | np.isinf(data) | flat
     # Slope test (MATLAB default ON) — flag 1/f-violating windows.
     if slope_test:
