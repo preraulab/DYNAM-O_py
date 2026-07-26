@@ -29,10 +29,20 @@ def main():
         ("ParamBasisOpts", "fit_param_basis"),
     )
     _require_module(
+        "pydynamo.soph.splinefit",
+        (
+            "SplineBasisOpts",
+            "SplineFitResult",
+            "SplineObject",
+            "fit_spline_basis",
+        ),
+    )
+    _require_module(
         "dynamo_rs",
         (
             "extract_tfpeaks",
             "fit_rotgauss",
+            "fit_tensor_product_spline",
             "fit_vmgauss",
             "read_edf",
             "read_staging",
@@ -48,8 +58,8 @@ def main():
 
     print(
         "OK: pydynamo "
-        f"{pydynamo.__version__}, standalone paramfit, dynamo_rs, and "
-        "multitaper_rs are importable."
+        f"{pydynamo.__version__}, standalone parametric/spline fits, "
+        "dynamo_rs, and multitaper_rs are importable."
     )
     return 0
 
