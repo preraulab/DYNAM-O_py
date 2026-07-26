@@ -104,7 +104,9 @@ class SOPHOpts:
     # Slow-oscillation band
     SO_freqrange: tuple = (0.3, 1.5)
 
-    # SO-power computation
+    # SO-power computation. For shift methods, the suffix names the stages
+    # included in the percentile (for example, p2shift1234 uses stages 1-4,
+    # while p2shift12345 also includes Wake). Undefined stage 0 is not eligible.
     SOpower_norm_method: str = "p2shift1234"
     SOpower_min_time_in_bin: float = 10.0       # minutes
     SOpower_outlier_threshold: float = 3.0
@@ -125,12 +127,6 @@ class SOPHOpts:
     SOphase_binsizestep: tuple = (2 * pi / 5, 2 * pi / 100)
     SOphase_min_peak_at_freq: int = 0
     SOphase_norm_dim: int = 1
-
-    # Whether the one shared SO-power series uses only the stages named in the
-    # shift method when calculating its normalization percentile. False
-    # matches runDYNAMO, which computes one all-stage-shifted series and reuses
-    # it for both per-peak values and the histogram.
-    SOpower_peak_shift_uses_stages: bool = False
 
     # Stages included in histograms (DYNAM-O convention: 1=N3 ... 5=Wake)
     SOPH_stages: tuple = (1, 2, 3)              # NREM only
