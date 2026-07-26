@@ -1,4 +1,4 @@
-"""Regressions for MATLAB DYNAM-O_dev PRs 71, 73, 74, 75, and 80."""
+"""Regressions for MATLAB DYNAM-O PRs 71, 73, 74, 75, and 80."""
 
 from types import SimpleNamespace
 

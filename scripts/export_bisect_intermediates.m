@@ -1,9 +1,9 @@
 %EXPORT_BISECT_INTERMEDIATES Rerun runDYNAMO with instrumented intermediates
 %                            captured, for the pydynamo backwards-bisection.
 %
-% Run in MATLAB from the DYNAM-O_dev directory:
-%   cd ../DYNAM-O_dev
-%   run('../pydynamo/scripts/export_bisect_intermediates.m')
+% Run in MATLAB from the DYNAM-O directory:
+%   cd ../DYNAM-O
+%   run('../DYNAM-O_py/scripts/export_bisect_intermediates.m')
 %
 % Writes one file per dataset:
 %   data_cache/bisect_intermediates_segment.mat
@@ -34,13 +34,13 @@
 
 clear; clc
 
-addpath(genpath(fullfile(getenv('HOME'), 'code', 'toolboxes', 'DYNAM-O_dev', 'toolbox')));
+addpath(genpath(fullfile(getenv('HOME'), 'code', 'toolboxes', 'DYNAM-O', 'toolbox')));
 
-out_dir = fullfile(getenv('HOME'), 'code', 'toolboxes', 'pydynamo', 'data_cache');
+out_dir = fullfile(getenv('HOME'), 'code', 'toolboxes', 'DYNAM-O_py', 'data_cache');
 if ~exist(out_dir, 'dir'); mkdir(out_dir); end
 
 % Load bundled example data
-load(fullfile(getenv('HOME'), 'code', 'toolboxes', 'DYNAM-O_dev', ...
+load(fullfile(getenv('HOME'), 'code', 'toolboxes', 'DYNAM-O', ...
               'example_data', 'example_data.mat'));
 
 % The bundled .mat stores stage_vals as int8 and data as single;

@@ -1,6 +1,6 @@
 """Top-level pipeline: run_dynamo().
 
-Matches DYNAM-O_dev's computeTFPeaks flow:
+Matches DYNAM-O's computeTFPeaks flow:
   1. Multitaper spectrogram pass-1 (1 s window)
   2. Artifacts + baseline subtract → pass-1 spect
   3. Extract pass-1 peaks (watershed + merge + trim), keep labels image

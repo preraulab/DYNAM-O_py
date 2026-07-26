@@ -6,7 +6,7 @@ import pytest
 import scipy.io as sio
 
 
-MAT_PATH = Path(__file__).resolve().parents[2] / "DYNAM-O_dev" / "watershed analysis" / "watershed_matlab.mat"
+MAT_PATH = Path(__file__).resolve().parents[2] / "DYNAM-O" / "watershed analysis" / "watershed_matlab.mat"
 
 
 @pytest.mark.skipif(not MAT_PATH.exists(), reason=f"{MAT_PATH} not found")

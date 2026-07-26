@@ -1,6 +1,6 @@
 """Parametric-basis fitting (SOPH dimensionality reduction).
 
-Port of DYNAM-O_dev/toolbox/SOPH_dim_reduction/parametric_basis/. The
+Port of DYNAM-O/toolbox/SOPH_dim_reduction/parametric_basis/. The
 nonlinear fits themselves are the shared Rust kernels
 (`dynamo_rs.fit_rotgauss` / `fit_vmgauss`); this package is the mode search,
 seeding, and model-selection loop around them.

@@ -1,10 +1,10 @@
-"""Multitaper spectrogram wrapper — delegates to the DYNAM-O_dev submodule.
+"""Multitaper spectrogram wrapper — delegates to the sibling DYNAM-O checkout.
 
 Rather than reimplement the wrapper around multitaper_rs, we import the
 canonical Prerau-lab `multitaper_spectrogram` function already vetted for
-MATLAB equivalence. It lives as a submodule of DYNAM-O at
+MATLAB equivalence. It lives in a submodule of DYNAM-O at
 
-    ../DYNAM-O_dev/toolbox/helper_functions/multitaper_toolbox/python/
+    ../DYNAM-O/toolbox/helper_functions/multitaper_toolbox/python/
 
 and internally dispatches to the Rust kernel (multitaper_rs) when available.
 
@@ -24,14 +24,14 @@ import numpy as np
 
 _SUBMODULE_PATH = (
     Path(__file__).resolve().parents[3]
-    / "DYNAM-O_dev" / "toolbox" / "helper_functions"
+    / "DYNAM-O" / "toolbox" / "helper_functions"
     / "multitaper_toolbox" / "python"
 )
 _WRAPPER_PATH = _SUBMODULE_PATH / "multitaper_spectrogram_python.py"
 if not _WRAPPER_PATH.is_file():
     raise ModuleNotFoundError(
         "The DYNAM-O multitaper Python wrapper is missing. Expected it at "
-        f"{_WRAPPER_PATH}. Clone DYNAM-O_dev on its rust-bridge branch next "
+        f"{_WRAPPER_PATH}. Clone DYNAM-O on its master branch next "
         "to DYNAM-O_py and initialize "
         "toolbox/helper_functions/multitaper_toolbox; see README.md."
     )
