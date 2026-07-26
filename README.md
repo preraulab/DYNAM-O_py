@@ -29,6 +29,11 @@ Time-series + metadata pipelines (ported this session — mirror pydynamo 1:1):
 - `detect_artifacts` — two-band (HF + BB) robust-z-score artifact detection. Bit-identical to `pydynamo.artifacts.detect_artifacts(..., slope_test=False)`. (Slope-test branch is a follow-up — needs multitaper.)
 - `build_baseline_exclude`, `compute_baseline`, `subtract_baseline` — full baseline subpipeline.
 - `hilbert`, `sosfiltfilt`, `movmean`, `unwrap` — raw primitives (pydynamo already picks `movmean` up for the artifact detrend).
+- `fit_rotgauss`, `fit_vmgauss`, `fit_tensor_product_spline` — shared
+  parametric and spline-basis fit kernels used by the default Python pipeline.
+  Set `fit_param_basis=False` or `fit_spline_basis=False` to skip either fit
+  family. Each spline result includes a callable `spline_obj` with the fitted
+  coefficients, augmented knots, and spline order.
 
 Multitaper spectrogram delegates to the existing
 [`multitaper_rs`](https://github.com/preraulab/multitaper_toolbox) crate.
