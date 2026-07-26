@@ -50,15 +50,16 @@ def test_pure_extraction_filters_on_inclusive_pixel_span(monkeypatch):
     assert peaks.loc[0, "Bandwidth"] == pytest.approx(2.0)
 
 
-def test_refinement_retains_time_edge_peaks_at_original_frequency(
+def test_refinement_retains_time_edges_but_drops_invalid_interior(
     monkeypatch,
 ):
     stats = pd.DataFrame({
-        "PeakTime": [1.0, 5.0, 9.0],
-        "PeakFrequency": [5.0, 6.0, 8.0],
+        "PeakTime": [1.0, 5.0, 6.0, 9.0],
+        "PeakFrequency": [5.0, 6.0, 9.0, 8.0],
         "BoundingBox": [
             (0.5, 4.0, 1.0, 4.0),
             (4.5, 4.0, 1.0, 4.0),
+            (5.5, 4.0, 1.0, 0.0),
             (8.5, 4.0, 1.0, 4.0),
         ],
     })
@@ -69,7 +70,13 @@ def test_refinement_retains_time_edge_peaks_at_original_frequency(
     ):
         seen_event_times.extend(event_times)
         return (
-            np.array([[0.0], [1.0], [2.0], [5.0], [1.0]]),
+            np.array([
+                [0.0, 0.0],
+                [1.0, 1.0],
+                [2.0, 2.0],
+                [5.0, 5.0],
+                [1.0, 1.0],
+            ]),
             np.array([4.0, 5.0, 6.0, 7.0, 8.0]),
         )
 
@@ -86,6 +93,6 @@ def test_refinement_retains_time_edge_peaks_at_original_frequency(
         refine_method="spect_max",
     )
 
-    assert seen_event_times == [5.0]
+    assert seen_event_times == [5.0, 6.0]
     assert refined["PeakTime"].tolist() == [1.0, 5.0, 9.0]
     assert refined["PeakFrequency"].tolist() == [5.0, 7.0, 8.0]
