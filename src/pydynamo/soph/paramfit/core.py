@@ -73,6 +73,7 @@ class ParamFitResult:
     amplitude is the empirical normalized-model density and xmean is wrapped
     to (-pi, pi]. `model_soph` is evaluated from the raw fit over the *full*
     input grid, not just the analysis window, which is what MATLAB returns.
+    `gof` describes that selected fit over the valid analysis window.
     """
     params: np.ndarray
     background: np.ndarray
@@ -119,7 +120,7 @@ def _fit_once(soph_win, x_win, y_win, B0, LB, UB, opts):
 
 
 def _fit_background_only(soph_win, x_win, y_win, kind):
-    """Bounded plane / sinusoid-only fit, for when no mode survives.
+    """Return a bounded background-only fit and its goodness of fit.
 
     MATLAB reaches this by calling fit_rotGauss with an empty B0
     (param_basis_power.m:511). The power background is linear; phase delegates
@@ -135,7 +136,12 @@ def _fit_background_only(soph_win, x_win, y_win, kind):
             np.array([1.0, 1.0, float(np.max(soph_win))]),
             0, True,
         )
-        return np.asarray(result["background"], dtype=float)
+        background = np.asarray(result["background"], dtype=float)
+        model = eval_modes(
+            np.zeros((0, 6)), x_win, y_win, kind=kind,
+            background=background, unit_row=True,
+        )
+        return background, _gof_from_model(soph_win, model, 3)
 
     from scipy.optimize import lsq_linear
 
@@ -145,12 +151,34 @@ def _fit_background_only(soph_win, x_win, y_win, kind):
     lo = np.array([-_BG_SLOPE_LIM, -_BG_SLOPE_LIM, 0.0])
     hi = np.array([_BG_SLOPE_LIM, _BG_SLOPE_LIM, float(np.max(soph_win))])
     sol = lsq_linear(A, b, bounds=(lo, hi))
-    return sol.x
+    model = (A @ sol.x).reshape(soph_win.shape)
+    return sol.x, _gof_from_model(soph_win, model, 3)
 
 
 def _gof_from(res_dict):
     return {k: res_dict[k] for k in
             ("sse", "rsquare", "adjrsquare", "rmse", "dfe", "dfm")}
+
+
+def _gof_from_model(data, model, n_params):
+    """Mirror dynamo_rs::paramfit::Gof::from_data for Python-only fits."""
+    data = np.asarray(data, dtype=float)
+    residual = data - np.asarray(model, dtype=float)
+    sse = float(np.sum(residual ** 2))
+    sst = float(np.sum((data - np.mean(data)) ** 2))
+    n = float(data.size)
+    dfe = n - n_params
+    return {
+        "sse": sse,
+        "rsquare": 1.0 - sse / sst if sst > 0.0 else np.nan,
+        "adjrsquare": (
+            1.0 - (sse / dfe) / (sst / (n - 1.0))
+            if sst > 0.0 and dfe > 0.0 else np.nan
+        ),
+        "rmse": float(np.sqrt(sse / dfe)) if dfe > 0.0 else np.nan,
+        "dfe": dfe,
+        "dfm": float(n_params),
+    }
 
 
 def _phase_empirical_amplitudes(params, background, phase_bins, freq_bins):
@@ -337,13 +365,15 @@ def fit_param_basis_axis(soph, x_bins, y_bins, opts: ParamBasisOpts,
         if revert:
             if ii == 1:
                 # No mode helped at all: return background only.
-                bg = _fit_background_only(soph_win, x_win, y_win, opts.kind)
+                bg, gof = _fit_background_only(
+                    soph_win, x_win, y_win, opts.kind,
+                )
                 model = eval_modes(np.zeros((0, 6)), x_bins, y_bins,
                                    kind=opts.kind, background=bg,
                                    unit_row=(opts.kind == "phase"))
                 return ParamFitResult(
                     params=np.zeros((0, 6)), background=bg, model_soph=model,
-                    gof=_gof_from(res), wshed_img=wshed_img, fit_iteration=0,
+                    gof=gof, wshed_img=wshed_img, fit_iteration=0,
                     iter_numbers=[], iter_rsquared=[],
                     n_wshed_modes=n_wshed_modes,
                 )
@@ -359,12 +389,12 @@ def fit_param_basis_axis(soph, x_bins, y_bins, opts: ParamBasisOpts,
             last_B0i, last_LBi, last_UBi = B0i, LBi, UBi
 
     if not good_nums:
-        bg = _fit_background_only(soph_win, x_win, y_win, opts.kind)
+        bg, gof = _fit_background_only(soph_win, x_win, y_win, opts.kind)
         model = eval_modes(np.zeros((0, 6)), x_bins, y_bins, kind=opts.kind,
                            background=bg, unit_row=(opts.kind == "phase"))
         return ParamFitResult(
             params=np.zeros((0, 6)), background=bg, model_soph=model,
-            gof={}, wshed_img=wshed_img, fit_iteration=0,
+            gof=gof, wshed_img=wshed_img, fit_iteration=0,
             iter_numbers=[], iter_rsquared=[], n_wshed_modes=n_wshed_modes,
         )
 

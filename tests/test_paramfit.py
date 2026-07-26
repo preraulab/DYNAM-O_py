@@ -303,6 +303,67 @@ def test_phase_background_only_fit_keeps_unit_row_normalization():
     assert np.allclose(res.model_soph.sum(axis=1), 1.0, atol=1e-12)
 
 
+def test_power_background_fallback_returns_matching_gof():
+    truth = np.array([[2.0, 10.0, 1.0, 5.0, 4.0, 0.0]])
+    soph = _make_power_soph(truth, background=(0.0, 0.0, 0.2))
+    opts = ParamBasisOpts.power(
+        max_peaks=1, criterion="max", min_amp=np.inf, min_freq_diff=0.0,
+    )
+
+    res = fit_param_basis_axis(
+        soph, POWER_BINS, FREQ_BINS, opts, seed_modes=truth,
+    )
+
+    valid_power = (
+        (POWER_BINS >= opts.feature_limits[0])
+        & (POWER_BINS <= opts.feature_limits[1])
+    )
+    valid_freq = (
+        (FREQ_BINS >= opts.freq_limits[0])
+        & (FREQ_BINS <= opts.freq_limits[1])
+    )
+    selected_sse = np.sum(
+        (soph[np.ix_(valid_freq, valid_power)]
+         - res.model_soph[np.ix_(valid_freq, valid_power)]) ** 2
+    )
+
+    assert res.params.shape == (0, 6)
+    assert res.gof["sse"] == pytest.approx(selected_sse, abs=1e-10)
+
+
+def test_phase_background_fallback_returns_matching_gof():
+    phase_bins = np.linspace(-np.pi, np.pi, 31)
+    freq_bins = np.linspace(2.0, 18.0, 33)
+    truth = np.array([[0.05, 10.0, 1.5, 0.0, 1.0, 0.0]])
+    soph = eval_modes(
+        truth, phase_bins, freq_bins, kind="phase",
+        background=np.array([0.0, 0.0, 0.001]), unit_row=True,
+    )
+    opts = ParamBasisOpts.phase(
+        max_peaks=1, criterion="max", min_amp=np.inf,
+    )
+
+    res = fit_param_basis_axis(
+        soph, phase_bins, freq_bins, opts, seed_modes=truth,
+    )
+
+    valid_phase = (
+        (phase_bins >= opts.feature_limits[0])
+        & (phase_bins <= opts.feature_limits[1])
+    )
+    valid_freq = (
+        (freq_bins >= opts.freq_limits[0])
+        & (freq_bins <= opts.freq_limits[1])
+    )
+    selected_sse = np.sum(
+        (soph[np.ix_(valid_freq, valid_phase)]
+         - res.model_soph[np.ix_(valid_freq, valid_phase)]) ** 2
+    )
+
+    assert res.params.shape == (0, 6)
+    assert res.gof["sse"] == pytest.approx(selected_sse, abs=1e-10)
+
+
 @pytest.mark.parametrize("center", [np.pi - 0.1, -np.pi + 0.1])
 def test_phase_watershed_is_periodic_across_seam(monkeypatch, center):
     from pydynamo.soph.paramfit import core
@@ -378,10 +439,8 @@ def test_fused_and_assembled_extraction_agree_on_seeds():
 def test_gof_matches_the_selected_iteration_not_the_last():
     """After a revert, the returned gof must describe the returned params.
 
-    param_basis_power.m reassigns `fitobj` to the selected iteration but never
-    reassigns `gof`, so MATLAB reports the *rejected* final iteration's
-    goodness-of-fit alongside the kept model. We deliberately do not
-    reproduce that.
+    DYNAM-O_dev PR #79 fixed MATLAB to select `fitobj` and `gof` together.
+    Keep the Python port on that same contract.
     """
     truth = np.array([[3.0, 13.5, 1.2, 10.0, 6.0, 0.0]])
     soph = _make_power_soph(truth)
