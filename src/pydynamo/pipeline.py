@@ -400,6 +400,26 @@ def run_dynamo(
             stats["SOphase"] = (peak_phase_unwrapped + np.pi) % (2 * np.pi) - np.pi
 
     # ---- SOPH histograms ----
+    # Match SOpowerphaseHistogram.m: the SO-power and SO-phase grids can
+    # represent the same excluded interval with different NaN footprints.
+    # Propagate SO-power invalidity to the phase grid before either histogram
+    # selects peaks so both histograms use the same event population.
+    sopower_dt = SOpower_times[1] - SOpower_times[0]
+    power_at_phase_times = np.interp(
+        SOphase_times,
+        np.concatenate((
+            [SOpower_times[0] - sopower_dt], SOpower_times,
+            [SOpower_times[-1] + sopower_dt],
+        )),
+        np.concatenate((
+            [SOpower_norm[0]], SOpower_norm, [SOpower_norm[-1]],
+        )),
+        left=np.nan,
+        right=np.nan,
+    )
+    SOphase_hist = SOphase_unwrapped.copy()
+    SOphase_hist[np.isnan(power_at_phase_times)] = np.nan
+
     if verbose: print("[dynamo] SO-power histogram...")
     pf = stats["PeakFrequency"].to_numpy() if not stats.empty else np.array([])
     pt = stats["PeakTime"].to_numpy() if not stats.empty else np.array([])
@@ -417,7 +437,7 @@ def run_dynamo(
     if verbose: print("[dynamo] SO-phase histogram...")
     with _timer(timings, "soph_sophase_hist"):
         sopha = so_phase_histogram(
-            pf, pt, ps, SOphase_unwrapped, SOphase_times, SOphase_stages,
+            pf, pt, ps, SOphase_hist, SOphase_times, SOphase_stages,
             time_range=time_range, soph_stages=soph.SOPH_stages,
             freq_range=soph.freq_range, freq_binsizestep=soph.freq_binsizestep,
             so_range=soph.SOphase_range,
@@ -426,12 +446,17 @@ def run_dynamo(
             compute_rate=soph.compute_rate, norm_dim=soph.SOphase_norm_dim,
         )
 
-    # NREM-included peaks (SOPH_stages filter — matches MATLAB's hist_peakidx).
-    # SO-power and SO-phase selection masks should agree on stage/time/NaN so
-    # combine them; peaks excluded by either are not counted in any histogram.
-    peak_selection_inds = np.asarray(
-        sopow["peak_selection_inds"] & sopha["peak_selection_inds"], dtype=bool
-    ) if (not stats.empty) else np.zeros(0, dtype=bool)
+    # SOpowerphaseHistogram.m requires one shared TF-peak population.
+    power_peak_selection = np.asarray(
+        sopow["peak_selection_inds"], dtype=bool,
+    )
+    phase_peak_selection = np.asarray(
+        sopha["peak_selection_inds"], dtype=bool,
+    )
+    assert np.array_equal(power_peak_selection, phase_peak_selection), (
+        "SO-power and SO-phase histograms included different TF peaks."
+    )
+    peak_selection_inds = power_peak_selection
 
     sophs = SOPHsResult(
         SOpower_mat=sopow["c_mat"], SOphase_mat=sopha["c_mat"],
