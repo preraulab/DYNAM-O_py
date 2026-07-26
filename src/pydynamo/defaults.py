@@ -89,7 +89,8 @@ class BaselineOpts:
     baseline_stages: tuple = (1, 2, 3, 4, 5)
     baseline_exclude: Sequence[float] = field(default_factory=tuple)
     baseline_ptile: float = 2.0
-    baseline_trim: tuple = (float("-inf"), float("inf"))
+    # Absolute range in seconds, or a symmetric scalar buffer in minutes.
+    baseline_trim: float | Sequence[float] = (float("-inf"), float("inf"))
 
 
 @dataclass(frozen=True)
