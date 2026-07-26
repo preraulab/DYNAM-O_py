@@ -1,7 +1,7 @@
 """Per-segment TF-peak extraction — follows pyDYNAM-O's `detect_tfpeaks`.
 
 Flow per segment:
-    1. (optional) downsample by (freq_factor, time_factor)
+    1. (optional) downsample by (time_factor, freq_factor)
     2. watershed on -spect with watershed_line=True
     3. build RAG via expand_labels(distance=5) + skimage.graph.RAG
     4. merge_segment: iterative max-weight edge merge until w < merge_thresh
@@ -58,6 +58,14 @@ def _pow2db(y: np.ndarray | float) -> np.ndarray | float:
     arr = np.asarray(y, dtype=float)
     out = np.where(arr > 0, 10 * np.log10(np.where(arr > 0, arr, 1.0)), np.nan)
     return out
+
+
+def _filter_label_image(labels: np.ndarray, table: pd.DataFrame) -> np.ndarray:
+    """Keep only label ids represented by rows in `table`."""
+    if table.empty or "label" not in table:
+        return np.zeros_like(labels)
+    kept = table["label"].to_numpy(dtype=np.int64, copy=False)
+    return np.where(np.isin(labels, kept), labels, 0)
 
 
 def min_prominence(num_tapers: int, alpha: float = 0.95) -> float:
@@ -120,11 +128,14 @@ def extract_tfpeaks_segment(
     prom_min: float | None = None,     # chi-squared-based if None
     num_tapers_for_prom: int = 3,
     return_labels: bool = False,
+    return_raw_labels: bool = False,
+    trim_shift_val: float | None = None,
 ) -> pd.DataFrame | Tuple[pd.DataFrame, np.ndarray]:
     """Extract TF-peaks from one spectrogram segment.
 
-    When `return_labels=True`, also returns the trimmed (F, T) label image,
-    useful as a pass-1 mask for the second watershed pass.
+    When `return_labels=True`, also returns the trimmed (F, T) label image
+    restricted to peaks in the returned table. Set `return_raw_labels=True`
+    only when the unfiltered image is needed as a pass-1 watershed mask.
     """
     spect = np.ascontiguousarray(np.asarray(spect, dtype=np.float64))
     F, T = spect.shape
@@ -136,7 +147,7 @@ def extract_tfpeaks_segment(
 
     # 1) Downsample (pyDYNAM-O: simple stride slicing)
     if downsample is not None and (downsample[0] > 1 or downsample[1] > 1):
-        f_f, t_f = int(downsample[0]), int(downsample[1])
+        t_f, f_f = int(downsample[0]), int(downsample[1])
         seg_LR = spect[::f_f, ::t_f]
     else:
         f_f = t_f = 1
@@ -205,7 +216,7 @@ def extract_tfpeaks_segment(
     from pydynamo.tfpeaks.trim import trim_regions as _trim_all
     trim_labels, _ = _trim_all(
         labels_full.astype(np.int64, copy=False),
-        spect, vol_thresh=trim_vol, shift_val=None,
+        spect, vol_thresh=trim_vol, shift_val=trim_shift_val,
     )
     # Cast to int64 so downstream regionprops_table / indexing stays consistent.
     trim_labels = trim_labels.astype(np.int64, copy=False)
@@ -225,6 +236,9 @@ def extract_tfpeaks_segment(
         )
     )
     if props.empty:
+        if return_labels:
+            return props, (trim_labels if return_raw_labels
+                           else np.zeros_like(trim_labels))
         return props
 
     # Prominence in dB: MATLAB / pyDYNAM-O compute pow2db(max - min) on
@@ -295,7 +309,9 @@ def extract_tfpeaks_segment(
         if c in props.columns:
             del props[c]
     if return_labels:
-        return props, trim_labels
+        labels_out = (trim_labels if return_raw_labels
+                      else _filter_label_image(trim_labels, props))
+        return props, labels_out
     return props
 
 
@@ -316,7 +332,7 @@ def extract_tfpeaks_fused(
     sfreqs: np.ndarray,
     seg_time: float = 30.0,
     return_labels: bool = False,
-    downsample: Tuple[int, int] = (2, 2),
+    downsample: Tuple[int, int] | None = (2, 2),
     merge_thresh: float = 11.0,
     max_merges: float = float("inf"),
     trim_vol: float = 0.8,
@@ -326,6 +342,8 @@ def extract_tfpeaks_fused(
     bw_max: float = 15.0,
     prom_min: float | None = None,
     num_tapers_for_prom: int = 3,
+    return_raw_labels: bool = False,
+    trim_shift_val: float | None = None,
     **_ignored,
 ) -> pd.DataFrame | Tuple[pd.DataFrame, np.ndarray]:
     """Whole-spectrogram extraction via the fused `dynamo_rs.extract_tfpeaks`.
@@ -339,19 +357,32 @@ def extract_tfpeaks_fused(
     and applied here afterwards. That split matters — MATLAB masks the pass-2
     spectrogram with the *unfiltered* pass-1 label image, so applying the caps
     inside Rust would shrink the mask and cost pass-2 peaks.
+
+    Label images are restricted to rows in the returned table by default.
+    `return_raw_labels=True` preserves the unfiltered Rust labels for the
+    internal pass-1 mask.
     """
     if prom_min is None:
         prom_min = min_prominence(num_tapers_for_prom, 0.95)
 
+    spect = np.ascontiguousarray(spect, dtype=np.float64)
+    if downsample is None:
+        downsample_t = downsample_f = 1
+    else:
+        downsample_t = int(downsample[0])
+        downsample_f = int(downsample[1])
+    if trim_shift_val is None:
+        trim_shift_val = float(np.min(spect))
+
     res = _dynamo_rs.extract_tfpeaks(
-        np.ascontiguousarray(spect, dtype=np.float64),
+        spect,
         np.ascontiguousarray(stimes, dtype=np.float64),
         np.ascontiguousarray(sfreqs, dtype=np.float64),
         None,                       # baseline already divided out upstream
         float(seg_time),
-        int(downsample[0]), int(downsample[1]),
+        downsample_f, downsample_t,
         float(merge_thresh), float(max_merges), float(trim_vol),
-        float("nan"),               # trim_shift_val: per-segment min(spect)
+        float(trim_shift_val),       # one global shift, matching MATLAB
         float(dur_min), float("inf"),   # dur_max capped below, not in Rust
         float(bw_min), float("inf"),    # bw_max  capped below, not in Rust
         float("-inf"), float("inf"),    # freq cuts: MATLAB passes [-inf inf]
@@ -378,7 +409,9 @@ def extract_tfpeaks_fused(
         df = df[keep].reset_index(drop=True)
 
     if return_labels:
-        return df, labels
+        labels_out = (labels if return_raw_labels
+                      else _filter_label_image(labels, df))
+        return df, labels_out
     return df
 
 
@@ -390,13 +423,16 @@ def extract_tfpeaks(
     n_jobs: int = -1,
     return_labels: bool = False,
     use_fused: bool | None = None,
+    return_raw_labels: bool = False,
     **segment_kwargs,
 ) -> pd.DataFrame | Tuple[pd.DataFrame, np.ndarray]:
     """Split the spectrogram into `seg_time`-second segments and extract
     TF-peaks per segment, concatenating results. Uses joblib for parallelism.
 
     When `return_labels=True`, also returns a stitched (F, T) label image
-    covering the full spectrogram (each peak carries a unique int label).
+    covering the full spectrogram. By default its nonzero ids correspond
+    exactly to rows in the returned table. `return_raw_labels=True` keeps
+    unfiltered labels for the internal pass-1 watershed mask.
 
     `use_fused` selects the single-call Rust kernel (the same one the MATLAB
     rust backend uses) instead of assembling the stages in Python. None means
@@ -413,11 +449,16 @@ def extract_tfpeaks(
             )
         return extract_tfpeaks_fused(
             spect, stimes, sfreqs, seg_time=seg_time,
-            return_labels=return_labels, **segment_kwargs,
+            return_labels=return_labels,
+            return_raw_labels=return_raw_labels,
+            **segment_kwargs,
         )
 
     dt = float(stimes[1] - stimes[0])
     F, T = spect.shape
+    trim_shift_val = segment_kwargs.pop("trim_shift_val", None)
+    if trim_shift_val is None:
+        trim_shift_val = float(np.min(spect))
 
     # Match MATLAB segmentData.m:85-107 exactly: ceil-divide to get n_segs,
     # then ceil-divide again to get even-sized segments (last one may be
@@ -439,7 +480,11 @@ def extract_tfpeaks(
     def _run(si, start, end):
         return extract_tfpeaks_segment(
             spect[:, start:end], stimes[start:end], sfreqs,
-            segment_num=si, return_labels=return_labels, **segment_kwargs,
+            segment_num=si,
+            return_labels=return_labels,
+            return_raw_labels=True,
+            trim_shift_val=trim_shift_val,
+            **segment_kwargs,
         )
 
     if n_jobs == 1 or len(segments) <= 1:
@@ -458,21 +503,18 @@ def extract_tfpeaks(
         tables = []
         offset = 0
         for (si, start, end), (tbl, seg_labels) in zip(segments, results):
+            seg_max = int(seg_labels.max())
+            if return_raw_labels:
+                selected_seg = seg_labels
+            else:
+                selected_seg = _filter_label_image(seg_labels, tbl)
+            shifted = np.where(selected_seg > 0, selected_seg + offset, 0)
+            full_labels[:, start:end] = shifted
             if not tbl.empty:
                 tbl = tbl.copy()
-                # Keep only labels that passed the post-stats filter. The raw
-                # seg_labels image contains every label output by trim, so if
-                # we paint it as-is we'd include peaks that failed the dur/
-                # bw/height filter — inflating the downstream mask area.
-                kept_labels = set(int(x) for x in tbl["label"].to_numpy())
-                filtered_seg = np.where(
-                    np.isin(seg_labels, list(kept_labels)), seg_labels, 0
-                )
                 tbl["label"] = tbl["label"] + offset
-                shifted = np.where(filtered_seg > 0, filtered_seg + offset, 0)
-                full_labels[:, start:end] = shifted
-                offset += int(seg_labels.max())
                 tables.append(tbl)
+            offset += seg_max
         if not tables:
             return pd.DataFrame(), full_labels
         return pd.concat(tables, ignore_index=True), full_labels

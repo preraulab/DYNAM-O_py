@@ -194,7 +194,8 @@ def run_dynamo(
     with _timer(timings, "extract_pass1"):
         stats1, labels1 = extract_tfpeaks(
             spect1_norm, stimes1, sfreqs,
-            seg_time=det.seg_time, return_labels=True,
+            seg_time=det.seg_time,
+            return_labels=True, return_raw_labels=True,
             num_tapers_for_prom=int(det.mtm_taper_params[1]),
             downsample=det.downsample_spect, merge_thresh=det.merge_thresh,
             max_merges=det.max_merges, trim_vol=det.trim_vol,
