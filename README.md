@@ -1,8 +1,10 @@
-# pyDYNAM-O
+# DYNAM-O_py
 
 Python + Rust port of [DYNAM-O](https://github.com/preraulab/DYNAM-O): TF-peak
 extraction (double watershed + merge + trim + Hann refinement), SO-power /
 SO-phase histograms, and a MATLAB-style summary figure.
+The repository is named **DYNAM-O_py**, while the Python package is named
+`pydynamo`.
 
 ## Siblings
 
