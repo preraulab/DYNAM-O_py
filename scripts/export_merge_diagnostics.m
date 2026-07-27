@@ -2,9 +2,8 @@
 % the bisect. This is a ONE-TIME rerun — the heavy lifting is pass-2 extract
 % on the segment dataset, which runs in ~45 s.
 %
-% Run from MATLAB:
-%   cd ../DYNAM-O
-%   run('../DYNAM-O_py/scripts/export_merge_diagnostics.m')
+% Run from MATLAB in the DYNAM-O directory:
+%   run(fullfile('..', 'DYNAM-O_py', 'scripts', 'export_merge_diagnostics.m'))
 %
 % Writes:
 %   data_cache/night_stats.csv                     (full MATLAB stats_table, night)

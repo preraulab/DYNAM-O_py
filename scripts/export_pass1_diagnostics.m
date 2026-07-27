@@ -2,9 +2,8 @@
 % can diagnose why its pass-1 produces ~60% more regions than MATLAB
 % (pydynamo mask covers 24% of pass-2 spect, MATLAB only 14%).
 %
-% Run from MATLAB:
-%   cd ../DYNAM-O
-%   run('../DYNAM-O_py/scripts/export_pass1_diagnostics.m')
+% Run from MATLAB in the DYNAM-O directory:
+%   run(fullfile('..', 'DYNAM-O_py', 'scripts', 'export_pass1_diagnostics.m'))
 %
 % Writes:
 %   data_cache/pass1_diagnostics_segment.mat   — per-segment pass-1 region

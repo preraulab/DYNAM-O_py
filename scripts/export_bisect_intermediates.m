@@ -2,8 +2,7 @@
 %                            captured, for the pydynamo backwards-bisection.
 %
 % Run in MATLAB from the DYNAM-O directory:
-%   cd ../DYNAM-O
-%   run('../DYNAM-O_py/scripts/export_bisect_intermediates.m')
+%   run(fullfile('..', 'DYNAM-O_py', 'scripts', 'export_bisect_intermediates.m'))
 %
 % Writes one file per dataset:
 %   data_cache/bisect_intermediates_segment.mat

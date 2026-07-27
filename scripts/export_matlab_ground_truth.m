@@ -1,8 +1,7 @@
 %EXPORT_MATLAB_GROUND_TRUTH Re-export DYNAM-O segment_out.mat for Python validation.
 %
 % Run this from MATLAB in the DYNAM-O directory:
-%   cd ../DYNAM-O
-%   run('../DYNAM-O_py/scripts/export_matlab_ground_truth.m')
+%   run(fullfile('..', 'DYNAM-O_py', 'scripts', 'export_matlab_ground_truth.m'))
 %
 % Why:
 %   `segment_out.mat` was saved with the full `runDYNAMO('segment')` output,
@@ -12,7 +11,7 @@
 %     - segment_stats.csv       (human-readable, all scalar/numeric columns)
 %     - segment_stats_struct.mat (table2struct, v7.3 so Python's h5py can read it)
 %
-% Outputs are written to ../DYNAM-O_py/data_cache/
+% Outputs are written to ../DYNAM-O_py/data_cache/.
 
 clear; clc
 
