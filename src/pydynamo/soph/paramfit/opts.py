@@ -8,6 +8,13 @@ The x axis is the SO-feature axis: SO-power (dB) for the power fit, SO-phase
 (rad) for the phase fit. The y axis is always frequency (Hz). Mode parameter
 rows are always ``[amp, fmean, fstd, xmean, xstd, theta]``; ``fstd`` and
 ``xstd`` are standard deviations, not variances (param_basis_opts.m:56-58).
+
+The width bounds below are the historical literals divided by sqrt(2). That
+factor is the sigma reparameterization: the kernels used to omit the 1/2 in
+the exponent, so the fitted width was sqrt(2)*sigma and the bound literals
+were written in those units. Dividing keeps each bound describing the same
+*physical* window. The phase ``xstd`` (recikappa) bounds are deliberately NOT
+divided — that parameter was always a true sigma.
 """
 
 from __future__ import annotations
@@ -17,6 +24,8 @@ from math import pi, sqrt
 from typing import Literal, Sequence
 
 import numpy as np
+
+from pydynamo.soph.paramfit.basis import SQRT2
 
 Criterion = Literal["max", "mindr2", "minpctr2", "kneedle"]
 
@@ -64,8 +73,10 @@ class ParamBasisOpts:
 
     # Per-mode bounds, same column order as a mode row. nan entries are filled
     # from the data in `resolve_bounds`.
-    UB_default: tuple = (NAN, NAN, 2.5, NAN, 30.0, 0.03)
-    LB_default: tuple = (NAN, NAN, 0.1, NAN, 2.5, -0.03)
+    # Both width slots are rotGauss sigmas on the power axis, so both carry
+    # the /sqrt(2) sigma rescale of the historical 2.5 / 0.1 / 30 / 2.5.
+    UB_default: tuple = (NAN, NAN, 2.5 / SQRT2, NAN, 30.0 / SQRT2, 0.03)
+    LB_default: tuple = (NAN, NAN, 0.1 / SQRT2, NAN, 2.5 / SQRT2, -0.03)
     constrain_freq_center: bool = True
     _constrain_feature_center: bool = True
 
@@ -168,8 +179,15 @@ class ParamBasisOpts:
             criterion="minpctr2",
             min_dr2=0.01,
             min_pctr2=0.025,
-            UB_default=(NAN, NAN, sqrt(15.0), 2 * pi, 2 * pi, pi / 3),
-            LB_default=(NAN, NAN, 1.0, -2 * pi, pi / 5, -pi / 3),
+            # Slot 2 is the vmGauss frequency sigma (Hz). MATLAB's phase
+            # UB_default(3) is sqrt(15) in the sqrt(2)*sigma convention, so
+            # the sigma-equivalent is sqrt(15)/sqrt(2) = sqrt(7.5).
+            #
+            # Slot 4 is recikappa, which the von Mises factor already makes a
+            # true sigma, so 2*pi and pi/5 stay exactly as they are. These two
+            # slots are not symmetric -- do not "tidy" them into one rescale.
+            UB_default=(NAN, NAN, sqrt(7.5), 2 * pi, 2 * pi, pi / 3),
+            LB_default=(NAN, NAN, 1.0 / SQRT2, -2 * pi, pi / 5, -pi / 3),
         )
         return replace(base, **overrides)
 

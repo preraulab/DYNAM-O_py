@@ -26,7 +26,7 @@ import numpy as np
 import pandas as pd
 
 from pydynamo.soph.paramfit.basis import (
-    eval_modes, min_pairwise_freq_diff, mode_overlap,
+    SQRT2, eval_modes, min_pairwise_freq_diff, mode_overlap,
 )
 from pydynamo.soph.histogram import _wrap_to_pi
 from pydynamo.soph.paramfit.matlab_compat import prctile
@@ -76,12 +76,15 @@ class ParamFitResult:
     """One axis's parametric fit.
 
     `params` preserves the legacy numeric (N, 6) array
-    [amp, fmean, fstd, xmean, xstd, theta]. `params_table` provides MATLAB's
-    stable named output schema, including derived and per-mode annotations.
-    For phase, amplitude is the empirical normalized-model density and xmean
-    is wrapped to (-pi, pi]. `model_soph` is evaluated from the raw fit over
-    the *full* input grid, not just the analysis window, which is what MATLAB
-    returns. `gof` describes that selected fit over the valid analysis window.
+    [amp, fmean, fstd, xmean, xstd, theta]. `fstd` is a true standard
+    deviation on both axes; `xstd` is one too, as a rotGauss sigma for power
+    and as the von Mises `recikappa` for phase. `params_table` provides
+    MATLAB's stable named output schema, including derived and per-mode
+    annotations. For phase, amplitude is the empirical normalized-model
+    density and xmean is wrapped to (-pi, pi]. `model_soph` is evaluated from
+    the raw fit over the *full* input grid, not just the analysis window,
+    which is what MATLAB returns. `gof` describes that selected fit over the
+    valid analysis window.
     """
     params: np.ndarray
     background: np.ndarray
@@ -276,15 +279,20 @@ def fit_param_basis_axis(soph, x_bins, y_bins, opts: ParamBasisOpts,
     n_wshed_modes = mode_params.shape[0]
     if n_wshed_modes < 1:
         # Synthetic single seed at the window center (param_basis_power.m:304).
+        # `fstd` is a Gaussian sigma on either axis and takes the sigma
+        # rescale. The x width does too for power, but on the phase axis it is
+        # `recikappa`, which was always a true sigma, so it keeps the bare
+        # range/4. These two lines are deliberately not symmetric.
         amp_seed = float(np.nanmax(soph_win))
         if opts.wshed_exp:
             amp_seed = float(np.log(amp_seed))
+        x_width_divisor = 4.0 * SQRT2 if opts.kind == "power" else 4.0
         mode_params = np.array([[
             amp_seed,
             (y_win.max() + y_win.min()) / 2.0,
-            (y_win.max() - y_win.min()) / 4.0,
+            (y_win.max() - y_win.min()) / (4.0 * SQRT2),
             (x_win.max() + x_win.min()) / 2.0,
-            (x_win.max() - x_win.min()) / 4.0,
+            (x_win.max() - x_win.min()) / x_width_divisor,
             0.0,
         ]])
         n_wshed_modes = 1
@@ -315,7 +323,7 @@ def fit_param_basis_axis(soph, x_bins, y_bins, opts: ParamBasisOpts,
         else:
             seed_row, found = residual_max_seed(
                 soph_win, model_soph[np.ix_(valid_y, valid_x)],
-                x_win, y_win, B0i, opts.min_freq_diff,
+                x_win, y_win, B0i, opts.min_freq_diff, opts.kind,
             )
             B0i = np.vstack([B0i, seed_row if found else B0i.mean(axis=0)])
 
@@ -579,7 +587,7 @@ def fit_param_basis(
     seeds = None
     if stats is not None and len(stats):
         seeds = seeds_from_stats(stats, opts.freq_limits, opts.min_freq_diff,
-                                 wshed_exp=opts.wshed_exp)
+                                 wshed_exp=opts.wshed_exp, kind=opts.kind)
         if seeds.shape[0] == 0:
             seeds = None
     if seeds is None and opts.verbose:
