@@ -381,6 +381,34 @@ def test_kernel_widths_are_true_standard_deviations():
     assert vm_small / amp == pytest.approx(half, rel=1e-5)
 
 
+def test_rust_and_python_kernels_share_one_width_convention():
+    """The fitted widths must come back in the units `basis.py` evaluates.
+
+    This module is a hybrid: `dynamo_rs.fit_rotgauss` does the nonlinear fit,
+    then `core.py` re-evaluates the answer with the *Python* kernel to build
+    `model_soph` and to run the overlap / revert checks. If the two kernels
+    disagree on the width convention, the fit still converges (the model
+    family is the same, just reparameterized) and r-squared still hits 1, so
+    every other test in this file stays green while `model_soph` and every
+    emitted FreqStd / SOpowerStd are wrong by sqrt(2).
+
+    Planting a noiseless surface with the Python kernel and seeding at truth
+    makes the fit an identity, so any width ratio other than 1 is a convention
+    mismatch and nothing else.
+    """
+    truth = _power_modes([[3.0, 13.5, 1.2, 10.0, 6.0, 0.0]])
+    soph = _make_power_soph(truth, background=(0.0, 0.0, 0.05))
+    opts = ParamBasisOpts.power(max_peaks=1, criterion="max", min_amp=0.0)
+    res = fit_param_basis_axis(soph, POWER_BINS, FREQ_BINS, opts,
+                               seed_modes=truth)
+
+    assert res.params.shape[0] == 1
+    assert res.params[0, 2] == pytest.approx(truth[0, 2], rel=1e-4), \
+        "fitted fstd is not in the Python kernel's sigma units"
+    assert res.params[0, 4] == pytest.approx(truth[0, 4], rel=1e-4), \
+        "fitted SO-power width is not in the Python kernel's sigma units"
+
+
 def test_rot_gauss_integrates_to_two_pi_sigma_product():
     """Volume == amp * 2*pi*fstd*xstd, the bivariate-normal normalizer.
 
