@@ -26,7 +26,7 @@ import numpy as np
 import pandas as pd
 
 from pydynamo.soph.paramfit.basis import (
-    SQRT2, eval_modes, min_pairwise_freq_diff, mode_overlap,
+    eval_modes, min_pairwise_freq_diff, mode_overlap,
 )
 from pydynamo.soph.histogram import _wrap_to_pi
 from pydynamo.soph.paramfit.matlab_compat import prctile
@@ -279,20 +279,17 @@ def fit_param_basis_axis(soph, x_bins, y_bins, opts: ParamBasisOpts,
     n_wshed_modes = mode_params.shape[0]
     if n_wshed_modes < 1:
         # Synthetic single seed at the window center (param_basis_power.m:304).
-        # `fstd` is a Gaussian sigma on either axis and takes the sigma
-        # rescale. The x width does too for power, but on the phase axis it is
-        # `recikappa`, which was always a true sigma, so it keeps the bare
-        # range/4. These two lines are deliberately not symmetric.
+        # These range/4 values are priors in the corrected parameter units,
+        # not historical coefficients being migrated to preserve a surface.
         amp_seed = float(np.nanmax(soph_win))
         if opts.wshed_exp:
             amp_seed = float(np.log(amp_seed))
-        x_width_divisor = 4.0 * SQRT2 if opts.kind == "power" else 4.0
         mode_params = np.array([[
             amp_seed,
             (y_win.max() + y_win.min()) / 2.0,
-            (y_win.max() - y_win.min()) / (4.0 * SQRT2),
+            (y_win.max() - y_win.min()) / 4.0,
             (x_win.max() + x_win.min()) / 2.0,
-            (x_win.max() - x_win.min()) / x_width_divisor,
+            (x_win.max() - x_win.min()) / 4.0,
             0.0,
         ]])
         n_wshed_modes = 1
@@ -323,7 +320,7 @@ def fit_param_basis_axis(soph, x_bins, y_bins, opts: ParamBasisOpts,
         else:
             seed_row, found = residual_max_seed(
                 soph_win, model_soph[np.ix_(valid_y, valid_x)],
-                x_win, y_win, B0i, opts.min_freq_diff, opts.kind,
+                x_win, y_win, B0i, opts.min_freq_diff,
             )
             B0i = np.vstack([B0i, seed_row if found else B0i.mean(axis=0)])
 
@@ -587,7 +584,7 @@ def fit_param_basis(
     seeds = None
     if stats is not None and len(stats):
         seeds = seeds_from_stats(stats, opts.freq_limits, opts.min_freq_diff,
-                                 wshed_exp=opts.wshed_exp, kind=opts.kind)
+                                 wshed_exp=opts.wshed_exp)
         if seeds.shape[0] == 0:
             seeds = None
     if seeds is None and opts.verbose:

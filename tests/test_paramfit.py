@@ -227,13 +227,8 @@ def test_seeds_from_stats_dedups_by_min_freq_diff():
     assert kept.shape[0] == 3, "min_freq_diff=0 disables dedup"
 
 
-def test_seed_widths_are_kind_aware_in_slot_four():
-    """Slot 4 is a rotGauss sigma for power but `recikappa` for phase.
-
-    Only the former takes the sigma rescale. A blanket divide driven by the
-    column index instead of the kernel would shrink every phase seed's
-    concentration with no error raised anywhere, so both branches are pinned.
-    """
+def test_watershed_seed_widths_use_unscaled_heuristics():
+    """Fresh watershed estimates stay in the corrected parameter units."""
     import pandas as pd
     stats = pd.DataFrame({
         "PeakFrequency": [13.5],
@@ -242,29 +237,64 @@ def test_seed_widths_are_kind_aware_in_slot_four():
         "Duration": [10.0],
         "Bandwidth": [2.0],
     })
-    power = seeds_from_stats(stats, (2.0, 18.0), 0.0, kind="power")
-    phase = seeds_from_stats(stats, (2.0, 18.0), 0.0, kind="phase")
+    seed = seeds_from_stats(stats, (2.0, 18.0), 0.0)
 
-    # Frequency width is a Gaussian sigma on both axes.
-    assert power[0, 2] == pytest.approx(2.0 / (1.96 * S2))
-    assert phase[0, 2] == pytest.approx(2.0 / (1.96 * S2))
-    # Slot 4 diverges.
-    assert power[0, 4] == pytest.approx(10.0 / (1.96 * S2))
-    assert phase[0, 4] == pytest.approx(10.0 / 1.96), "recikappa, no rescale"
+    assert seed[0, 2] == pytest.approx(2.0 / 1.96)
+    assert seed[0, 4] == pytest.approx(10.0 / 1.96)
 
-    # Same split on the residual-seed fallback floors, which only apply when
-    # there is no accepted mode to take a median from.
+
+@pytest.mark.parametrize("kind", ["power", "phase"])
+def test_synthetic_seed_widths_use_unscaled_range(monkeypatch, kind):
+    from pydynamo.soph.paramfit import core
+
+    y = np.linspace(8.0, 12.0, 17)
+    x = (np.linspace(0.0, 8.0, 17) if kind == "power"
+         else np.linspace(-np.pi, np.pi, 17))
+    soph = np.ones((y.size, x.size))
+    captured = []
+
+    def fake_fit(soph_win, x_win, y_win, B0, LB, UB, opts):
+        captured.append(B0.copy())
+        return {
+            "params": B0.copy(),
+            "background": np.zeros(3),
+            "sse": 1.0,
+            "rsquare": 0.5,
+            "adjrsquare": 0.5,
+            "rmse": 0.1,
+            "dfe": soph_win.size - B0.size - 3,
+            "dfm": B0.size + 3,
+        }
+
+    monkeypatch.setattr(core, "_fit_once", fake_fit)
+    opts = (ParamBasisOpts.power if kind == "power" else ParamBasisOpts.phase)(
+        max_peaks=1, criterion="max", min_amp=0.0,
+        feature_limits=(float(x.min()), float(x.max())),
+        freq_limits=(float(y.min()), float(y.max())),
+    )
+
+    fit_param_basis_axis(soph, x, y, opts, seed_modes=None)
+
+    assert len(captured) == 1
+    assert captured[0][0, 2] == pytest.approx(np.ptp(y) / 4.0)
+    assert captured[0][0, 4] == pytest.approx(np.ptp(x) / 4.0)
+
+
+@pytest.mark.parametrize("accepted", [
+    None,
+    np.array([[1.0, 1.0, 0.0, 10.0, 0.0, 0.0]]),
+])
+def test_residual_seed_invalid_medians_use_unscaled_fallbacks(accepted):
     y, x = np.linspace(2, 18, 21), np.linspace(-5, 25, 21)
     resid = np.zeros((21, 21))
     resid[10, 10] = 1.0
-    p_row, _ = residual_max_seed(resid, np.zeros_like(resid), x, y, None, 0.0,
-                                 kind="power")
-    ph_row, _ = residual_max_seed(resid, np.zeros_like(resid), x, y, None, 0.0,
-                                  kind="phase")
-    assert p_row[2] == pytest.approx(1.0 / S2)
-    assert ph_row[2] == pytest.approx(1.0 / S2)
-    assert p_row[4] == pytest.approx(5.0 / S2)
-    assert ph_row[4] == pytest.approx(5.0), "recikappa floor, no rescale"
+    row, found = residual_max_seed(
+        resid, np.zeros_like(resid), x, y, accepted, 0.0,
+    )
+
+    assert found
+    assert row[2] == pytest.approx(1.0)
+    assert row[4] == pytest.approx(5.0)
 
 
 def test_seeds_from_stats_respects_freq_limits():
