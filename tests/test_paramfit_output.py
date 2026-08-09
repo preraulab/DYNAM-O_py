@@ -12,6 +12,7 @@ from pydynamo.soph.paramfit import (
 )
 from pydynamo.soph.paramfit.output import (
     PK_COLUMNS,
+    _mode_peak_mask,
     annotate_modes_with_peak_stats,
     annotate_power_preferred_phase,
     create_params_table,
@@ -118,12 +119,14 @@ def test_param_fit_result_keeps_legacy_constructor_compatible():
 def test_analytic_volume_matches_matlab_formulas():
     power_params = np.array([[2.0, 10.0, 3.0, 5.0, 4.0, 0.2]])
     power = create_params_table(power_params, "power")
-    assert power.loc[0, "Volume"] == pytest.approx(24.0 * np.pi)
+    assert power.loc[0, "Volume"] == pytest.approx(48.0 * np.pi)
 
     phase_params = np.array([[0.05, 11.0, 2.0, 0.0, 1.2, 0.0]])
     phase = create_params_table(phase_params, "phase")
     kappa = 1.0 / 1.2**2
-    expected = 0.05 * 2.0 * np.pi * i0e(kappa) * np.sqrt(np.pi) * 2.0
+    expected = (
+        0.05 * 2.0 * np.pi * i0e(kappa) * np.sqrt(2.0 * np.pi) * 2.0
+    )
     assert phase.loc[0, "Volume"] == pytest.approx(expected)
 
     sharp = create_params_table(
@@ -171,7 +174,7 @@ def test_power_peak_summaries_use_finite_values_and_circular_phase_mean():
         np.array([[1.0, 10.0, 2.0, 5.0, 4.0, 0.0]]), "power"
     )
     stats = pd.DataFrame({
-        "PeakFrequency": [10.0, 11.0, 14.0],
+        "PeakFrequency": [10.0, 11.0, 16.0],
         "Duration": [1.0, 3.0, 100.0],
         "Bandwidth": [2.0, 4.0, 100.0],
         "Height": [10.0, np.nan, 100.0],
@@ -199,20 +202,20 @@ def test_power_peak_summaries_use_finite_values_and_circular_phase_mean():
     assert abs(phase_error) < 1e-12
 
 
-def test_phase_peak_assignment_uses_probability_and_circular_geometry():
+def test_phase_peak_assignment_matches_kernel_height_boundaries():
     table = create_params_table(
-        np.array([[1.0, 10.0, 2.0, 0.0, 1.0, 0.0]]), "phase"
+        np.array([[1.0, 10.0, 2.0, 0.0, np.sqrt(2.0), 0.0]]), "phase"
     )
     stats = pd.DataFrame({
-        "PeakFrequency": [10.0, 10.0],
-        "SOphase": [0.0, np.pi],
+        "PeakFrequency": [12.0, 10.0, 10.0, 12.02],
+        "SOphase": [0.0, np.pi / 2.0, np.pi, 0.0],
     })
+    prob = -np.expm1(-0.5)
 
-    wide = annotate_modes_with_peak_stats(table, "phase", stats, 0.95)
-    narrow = annotate_modes_with_peak_stats(table, "phase", stats, 0.5)
+    out = annotate_modes_with_peak_stats(table, "phase", stats, prob)
 
-    assert wide.loc[0, "PkCount"] == 2.0
-    assert narrow.loc[0, "PkCount"] == 1.0
+    assert out.loc[0, "PkCount"] == 2.0
+    assert out.loc[0, "PkFreq"] == pytest.approx(11.0)
 
 
 def test_peak_assignment_includes_exact_confidence_boundary():
@@ -227,12 +230,33 @@ def test_peak_assignment_includes_exact_confidence_boundary():
         ],
         "SOpower": [5.0, 5.0],
     })
-    prob = 1.0 - np.exp(-1.0)
+    prob = -np.expm1(-0.5)
 
     out = annotate_modes_with_peak_stats(table, "power", stats, prob)
 
     assert out.loc[0, "PkCount"] == 1.0
     assert out.loc[0, "PkFreq"] == boundary_frequency
+
+
+def test_power_containment_encloses_requested_probability():
+    fmean, fstd = 13.0, 1.3
+    pmean, pstd = 5.0, 7.0
+    mode_params = np.array([1.0, fmean, fstd, pmean, pstd, 0.0])
+
+    edges = np.linspace(-8.0, 8.0, 802)
+    z = (edges[:-1] + edges[1:]) / 2.0
+    z_power, z_freq = np.meshgrid(z, z)
+    stats = pd.DataFrame({
+        "PeakFrequency": fmean + z_freq.ravel() * fstd,
+        "SOpower": pmean + z_power.ravel() * pstd,
+    })
+    density = np.exp(-0.5 * (z_freq.ravel() ** 2 + z_power.ravel() ** 2))
+    total = density.sum()
+
+    for prob in (0.5, 0.8, 0.95, 0.99):
+        members = _mode_peak_mask(mode_params, "power", stats, prob)
+        captured = density[members].sum() / total
+        assert captured == pytest.approx(prob, abs=2e-3)
 
 
 def test_missing_peak_stats_use_zero_count_and_nan_summaries():
