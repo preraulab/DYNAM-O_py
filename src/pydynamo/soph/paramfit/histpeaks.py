@@ -17,7 +17,6 @@ import pandas as pd
 from scipy import ndimage
 from skimage import measure
 
-from pydynamo.soph.paramfit.basis import SQRT2
 from pydynamo.soph.paramfit.matlab_compat import prctile
 from pydynamo.tfpeaks.extract import _HAS_FUSED, watershed
 from pydynamo.tfpeaks.merge import (
@@ -240,8 +239,7 @@ def extract_hist_peaks(img, x, y, merge_thresh, dur_min, bw_min, height_min,
     return stats, labels
 
 
-def seeds_from_stats(stats, freq_limits, min_freq_diff, wshed_exp=False,
-                     kind="power"):
+def seeds_from_stats(stats, freq_limits, min_freq_diff, wshed_exp=False):
     """Turn an `extract_hist_peaks` table into a (N, 6) seed stack.
 
     Mirrors param_basis_power.m:196-236: drop seeds outside `freq_limits`,
@@ -252,12 +250,9 @@ def seeds_from_stats(stats, freq_limits, min_freq_diff, wshed_exp=False,
     get a width. Reproduced as written, keeping numerical parity. (The divisor
     is dimensionally questionable — 1.96 is a half-width z-score but the
     extents are full widths — but that is MATLAB's choice, not ours to fix
-    here.) The extra `/sqrt(2)` is the sigma reparameterization, which keeps
-    the seeded *shape* identical now that the parameter is a sigma.
-
-    `kind` matters because slot 4 is polymorphic: the SO-power Gaussian width
-    for ``'power'`` (rescales) but `recikappa` for ``'phase'``, which was
-    always a true sigma and must NOT be rescaled.
+    here.) These are fresh empirical estimates in the corrected parameter
+    units, not historical coefficients being migrated to preserve a fitted
+    surface, so their numeric values do not take the `/sqrt(2)` rescale.
     """
     if stats is None or len(stats) == 0:
         return np.zeros((0, 6))
@@ -281,15 +276,11 @@ def seeds_from_stats(stats, freq_limits, min_freq_diff, wshed_exp=False,
     if wshed_exp:
         amp0 = np.log(amp0)
 
-    # Slot 4 is a Gaussian sigma for power but recikappa for phase; only the
-    # former takes the sigma rescale.
-    so_width_divisor = 1.96 * SQRT2 if kind == "power" else 1.96
-
     return np.column_stack([
         amp0,
         s["PeakFrequency"].to_numpy(dtype=float),
-        s["Bandwidth"].to_numpy(dtype=float) / (1.96 * SQRT2),
+        s["Bandwidth"].to_numpy(dtype=float) / 1.96,
         s["SOFeature"].to_numpy(dtype=float),
-        s["Duration"].to_numpy(dtype=float) / so_width_divisor,
+        s["Duration"].to_numpy(dtype=float) / 1.96,
         np.zeros(len(s)),
     ])

@@ -17,10 +17,10 @@ from __future__ import annotations
 
 import numpy as np
 
-#: The sigma reparameterization factor. Historical Gaussian width literals —
-#: bounds, seed divisors, fallback floors — are divided by this so the
-#: physical window each one describes is unchanged now that the kernels carry
-#: the -1/2. Never apply it to a von Mises `recikappa`.
+#: The sigma reparameterization factor. Historical Gaussian coefficients and
+#: bounds are divided by this when preserving an existing fitted surface now
+#: that the kernels carry the -1/2. Fresh estimators and priors are already in
+#: the corrected parameter units. Never apply it to a von Mises `recikappa`.
 SQRT2 = float(np.sqrt(2.0))
 
 
