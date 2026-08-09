@@ -81,12 +81,12 @@ def create_params_table(params, kind: str) -> pd.DataFrame:
     freq_std = params[:, 2]
     feature_std = params[:, 4]
     if kind == "power":
-        values[:, 6] = density * np.pi * feature_std * freq_std
+        values[:, 6] = density * (2.0 * np.pi) * feature_std * freq_std
     else:
         kappa = 1.0 / feature_std**2
         values[:, 6] = (
             density * (2.0 * np.pi) * i0e(kappa)
-            * np.sqrt(np.pi) * freq_std
+            * np.sqrt(2.0 * np.pi) * freq_std
         )
 
     values[:, columns.index("PkCount")] = 0.0
@@ -147,12 +147,17 @@ def _mode_peak_mask(mode_params, kind, stats_table, prob):
         delta = (
             feature - feature_mean + delta_freq * np.sin(theta) + np.pi
         ) % (2.0 * np.pi) - np.pi
-        q = (delta_freq / freq_std) ** 2 + kappa * (1.0 - np.cos(delta))
+        q = (
+            0.5 * (delta_freq / freq_std) ** 2
+            + kappa * (1.0 - np.cos(delta))
+        )
     elif kind == "power":
         delta_feature = feature - feature_mean
         u = delta_freq * np.cos(theta) + delta_feature * np.sin(theta)
         v = -delta_freq * np.sin(theta) + delta_feature * np.cos(theta)
-        q = (u / freq_std) ** 2 + (v / feature_std) ** 2
+        q = 0.5 * (
+            (u / freq_std) ** 2 + (v / feature_std) ** 2
+        )
     else:
         raise ValueError("kind must be 'power' or 'phase'")
 
