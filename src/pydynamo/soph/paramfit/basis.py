@@ -3,36 +3,59 @@
 Ports rotGauss.m, vmGauss.m, select_modes.m and mode_overlap.m. The fitting
 itself lives in the Rust kernel (`dynamo_rs.fit_rotgauss` / `fit_vmgauss`);
 these are the pure-evaluation pieces the outer loop needs between fits.
+
+Every Gaussian factor here carries an explicit -1/2 in the exponent, which is
+what makes the width parameters genuine standard deviations. The historical
+form omitted it, so the fitted widths were sqrt(2) times the sigma they were
+named after. These kernels must stay bit-for-bit equivalent to the Rust ones
+in `rot_gauss.rs` / `vm_gauss.rs`: the fit runs in Rust and `core.py` then
+re-evaluates the result here, so a disagreement corrupts the revert checks and
+the returned `model_soph` without failing anything.
 """
 
 from __future__ import annotations
 
 import numpy as np
 
+#: The sigma reparameterization factor. Historical Gaussian width literals —
+#: bounds, seed divisors, fallback floors — are divided by this so the
+#: physical window each one describes is unchanged now that the kernels carry
+#: the -1/2. Never apply it to a von Mises `recikappa`.
+SQRT2 = float(np.sqrt(2.0))
+
 
 def rot_gauss(X, Y, amp, fmean, fstd, xmean, xstd, theta):
     """One rotated 2-D Gaussian — rotGauss.m:68.
 
-    X is the SO-feature axis, Y is frequency. `fstd`/`xstd` are standard
-    deviations. Note the exponent divides by the std and squares the whole
-    quotient, so these are 1/e widths rather than the 2*sigma^2 convention.
+    X is the SO-feature axis, Y is frequency. `fstd`/`xstd` are genuine
+    standard deviations: the exponent carries the -1/2, so the surface one
+    `fstd` from the center along the rotated frequency axis is exp(-1/2) of
+    the peak. Both widths take the same convention here, unlike vm_gauss.
     """
     dy, dx = Y - fmean, X - xmean
     ct, st = np.cos(theta), np.sin(theta)
     a = (dy * ct + dx * st) / fstd
     b = (-dy * st + dx * ct) / xstd
-    return amp * np.exp(-(a ** 2) - (b ** 2))
+    return amp * np.exp(-0.5 * (a ** 2 + b ** 2))
 
 
 def vm_gauss(X, Y, amp, fmean, fstd, phasepref, recikappa, theta):
     """One von-Mises x Gaussian peak — vmGauss.m.
 
-    Gaussian in frequency, von Mises in phase. `fstd` is a standard deviation
-    in Hz, and `recikappa` is 1/sqrt(kappa).
+    Gaussian in frequency, von Mises in phase. Both widths are true standard
+    deviations, but they get there by different routes and so are NOT
+    symmetric under rescaling:
+
+    * `fstd` is a sigma because of the explicit -1/2 below. Squaring the
+      denominator (DYNAM-O_dev PR #71) was necessary but not sufficient.
+    * `recikappa` (= 1/sqrt(kappa)) is ALREADY a sigma with no half needed,
+      because the von Mises factor is its own small-angle Gaussian:
+      exp(kappa*(cos d - 1)) -> exp(-d**2 / (2*recikappa**2)). Never rescale
+      it alongside `fstd`.
     """
     dy = Y - fmean
     kappa = 1.0 / recikappa ** 2
-    g = np.exp(-((dy / fstd) ** 2))
+    g = np.exp(-0.5 * (dy / fstd) ** 2)
     vm = np.exp(kappa * (np.cos(X - phasepref + dy * np.sin(theta)) - 1.0))
     return amp * g * vm
 

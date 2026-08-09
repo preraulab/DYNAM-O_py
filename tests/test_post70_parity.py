@@ -27,8 +27,10 @@ def test_vm_gauss_frequency_width_is_standard_deviation():
         phase, freq, 2.0, 10.0, 2.5, 0.0, 1.0, 0.0,
     )
 
+    # One sigma out, the kernel exp(-0.5*(dy/fstd)**2) falls to exp(-0.5).
+    # It was exp(-1) while the width was sqrt(2)*sigma rather than sigma.
     assert values[0, 1] / values[0, 0] == pytest.approx(
-        np.exp(-1.0), abs=1e-12,
+        np.exp(-0.5), abs=1e-12,
     )
 
 
@@ -60,8 +62,10 @@ def test_center_constraints_have_axis_specific_names_and_bounds():
     assert phase.constrain_phase_center is True
     assert not hasattr(phase, "constrain_power_center")
     assert ParamBasisOpts(kind="phase").constrain_phase_center is True
-    assert phase.LB_default[2] == 1.0
-    assert phase.UB_default[2] == pytest.approx(np.sqrt(15.0))
+    # Slot 2 is the vmGauss frequency sigma. MATLAB's 1.0 is in the
+    # sqrt(2)*sigma convention, so the sigma-equivalent is 1/sqrt(2).
+    assert phase.LB_default[2] == pytest.approx(1.0 / np.sqrt(2.0))
+    assert phase.UB_default[2] == pytest.approx(np.sqrt(7.5))
 
     lb, ub = resolve_bounds(
         ParamBasisOpts.phase(constrain_freq_center=False),

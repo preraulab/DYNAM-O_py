@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import numpy as np
 
+from pydynamo.soph.paramfit.basis import SQRT2
+
 
 def residual_max_seed(soph_yx, model_yx, x_axis, y_axis, accepted_modes,
-                      min_freq_diff):
+                      min_freq_diff, kind="power"):
     """Seed one new mode at the residual argmax.
 
     Returns ``(seed_row, found)`` where `seed_row` is
@@ -23,6 +25,10 @@ def residual_max_seed(soph_yx, model_yx, x_axis, y_axis, accepted_modes,
     masked out first; without that guard the residual peak beside an
     under-modelled mode gets picked and the new mode lands on top of the old
     one. `min_freq_diff = 0` disables the mask (the phase-axis convention).
+
+    `kind` selects the width fallbacks, because slot 4 is a Gaussian sigma for
+    ``'power'`` but `recikappa` for ``'phase'``, which was always a true sigma
+    and takes no reparameterization rescale.
     """
     soph_yx = np.asarray(soph_yx, dtype=float)
     model_yx = np.asarray(model_yx, dtype=float)
@@ -60,8 +66,11 @@ def residual_max_seed(soph_yx, model_yx, x_axis, y_axis, accepted_modes,
     y_idx, x_idx = np.unravel_index(lin, (ny, nx))
 
     # Width priors: median of accepted-mode stds, with floors so the LM bounds
-    # stay non-degenerate when there are no accepted modes yet.
-    fstd, xstd = 1.0, 5.0
+    # stay non-degenerate when there are no accepted modes yet. The medians
+    # ride whatever the accepted params already carry, so only the literal
+    # floors take the sigma rescale.
+    fstd = 1.0 / SQRT2
+    xstd = 5.0 / SQRT2 if kind == "power" else 5.0
     if accepted is not None:
         with np.errstate(all="ignore"):
             fstd_med = np.nanmedian(accepted[:, 2])

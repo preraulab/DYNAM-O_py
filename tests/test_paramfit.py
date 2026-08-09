@@ -23,6 +23,35 @@ dynamo_rs = pytest.importorskip("dynamo_rs")
 POWER_BINS = np.linspace(-5.0, 25.0, 61)
 FREQ_BINS = np.linspace(2.0, 18.0, 81)
 
+S2 = np.sqrt(2.0)
+
+
+def _power_modes(rows):
+    """Planted rotGauss modes, with the widths converted to sigma.
+
+    The literals in these tests were written against the historical
+    sqrt(2)*sigma width convention. Dividing both width columns leaves every
+    planted surface numerically identical to what it was, and keeps them
+    inside the rescaled bounds -- a planted `fstd` of 1.8 now exceeds the
+    power upper bound of 2.5/sqrt(2) = 1.768 and would be clamped by the
+    solver, quietly turning a recovery test into a bounds test.
+    """
+    m = np.asarray(rows, dtype=float).reshape(-1, 6).copy()
+    m[:, 2] /= S2
+    m[:, 4] /= S2
+    return m
+
+
+def _phase_modes(rows):
+    """Planted vmGauss modes, with only the frequency width converted.
+
+    Column 4 is `recikappa`, which the von Mises factor already makes a true
+    sigma. It must not be rescaled -- doing so is the column-index trap.
+    """
+    m = np.asarray(rows, dtype=float).reshape(-1, 6).copy()
+    m[:, 2] /= S2
+    return m
+
 
 def _make_power_soph(modes, background=(0.004, 0.002, 0.05)):
     return eval_modes(np.asarray(modes, float), POWER_BINS, FREQ_BINS,
@@ -31,7 +60,7 @@ def _make_power_soph(modes, background=(0.004, 0.002, 0.05)):
 
 def test_recovers_two_power_modes():
     """A clean 2-mode surface is recovered to tight tolerance."""
-    truth = np.array([
+    truth = _power_modes([
         [3.0, 13.5, 1.2, 10.0, 6.0, 0.01],
         [1.5, 6.0, 1.8, 2.0, 5.0, -0.02],
     ])
@@ -55,7 +84,7 @@ def test_recovers_two_power_modes():
 def test_model_soph_spans_full_grid_not_just_window():
     """MATLAB evaluates the model over the whole grid even though it fits only
     the analysis window; the shapes must not silently shrink."""
-    truth = np.array([[2.0, 12.0, 1.5, 8.0, 5.0, 0.0]])
+    truth = _power_modes([[2.0, 12.0, 1.5, 8.0, 5.0, 0.0]])
     soph = _make_power_soph(truth)
     opts = ParamBasisOpts.power(
         max_peaks=1, feature_limits=(0.0, 20.0), freq_limits=(4.0, 16.0),
@@ -68,7 +97,7 @@ def test_model_soph_spans_full_grid_not_just_window():
 def test_overlap_revert_rejects_duplicate_mode():
     """Two seeds on the same ridge must not both survive: the overlap check
     reverts the second one."""
-    truth = np.array([[3.0, 13.5, 1.2, 10.0, 6.0, 0.0]])
+    truth = _power_modes([[3.0, 13.5, 1.2, 10.0, 6.0, 0.0]])
     soph = _make_power_soph(truth)
     dup = np.vstack([truth, truth * np.array([1.0, 1.01, 1.0, 1.0, 1.0, 1.0])])
     opts = ParamBasisOpts.power(max_peaks=2, criterion="max",
@@ -79,9 +108,9 @@ def test_overlap_revert_rejects_duplicate_mode():
 
 
 def test_min_freq_diff_reverts_close_modes():
-    truth = np.array([[3.0, 13.5, 1.2, 10.0, 6.0, 0.0]])
+    truth = _power_modes([[3.0, 13.5, 1.2, 10.0, 6.0, 0.0]])
     soph = _make_power_soph(truth)
-    close = np.vstack([truth, [2.5, 13.6, 1.2, 10.0, 6.0, 0.0]])
+    close = np.vstack([truth, _power_modes([2.5, 13.6, 1.2, 10.0, 6.0, 0.0])])
     opts = ParamBasisOpts.power(max_peaks=2, criterion="max",
                                 min_freq_diff=0.5, max_overlap=1.0)
     res = fit_param_basis_axis(soph, POWER_BINS, FREQ_BINS, opts,
@@ -92,7 +121,7 @@ def test_min_freq_diff_reverts_close_modes():
 def test_residual_seeding_finds_second_mode():
     """With only one watershed seed, matching pursuit should discover the
     second mode from the residual."""
-    truth = np.array([
+    truth = _power_modes([
         [3.0, 13.5, 1.2, 10.0, 6.0, 0.0],
         [2.0, 6.0, 1.5, 5.0, 5.0, 0.0],
     ])
@@ -160,7 +189,7 @@ def test_watershed_seeding_finds_both_modes():
     dynamic threshold equals an actual edge weight, so a `>=` comparison
     merges the two basins into one and only one seed survives.
     """
-    truth = np.array([
+    truth = _power_modes([
         [3.0, 13.5, 1.2, 10.0, 6.0, 0.0],
         [1.5, 6.0, 1.8, 2.0, 5.0, 0.0],
     ])
@@ -198,6 +227,46 @@ def test_seeds_from_stats_dedups_by_min_freq_diff():
     assert kept.shape[0] == 3, "min_freq_diff=0 disables dedup"
 
 
+def test_seed_widths_are_kind_aware_in_slot_four():
+    """Slot 4 is a rotGauss sigma for power but `recikappa` for phase.
+
+    Only the former takes the sigma rescale. A blanket divide driven by the
+    column index instead of the kernel would shrink every phase seed's
+    concentration with no error raised anywhere, so both branches are pinned.
+    """
+    import pandas as pd
+    stats = pd.DataFrame({
+        "PeakFrequency": [13.5],
+        "SOFeature": [10.0],
+        "Height": [3.0],
+        "Duration": [10.0],
+        "Bandwidth": [2.0],
+    })
+    power = seeds_from_stats(stats, (2.0, 18.0), 0.0, kind="power")
+    phase = seeds_from_stats(stats, (2.0, 18.0), 0.0, kind="phase")
+
+    # Frequency width is a Gaussian sigma on both axes.
+    assert power[0, 2] == pytest.approx(2.0 / (1.96 * S2))
+    assert phase[0, 2] == pytest.approx(2.0 / (1.96 * S2))
+    # Slot 4 diverges.
+    assert power[0, 4] == pytest.approx(10.0 / (1.96 * S2))
+    assert phase[0, 4] == pytest.approx(10.0 / 1.96), "recikappa, no rescale"
+
+    # Same split on the residual-seed fallback floors, which only apply when
+    # there is no accepted mode to take a median from.
+    y, x = np.linspace(2, 18, 21), np.linspace(-5, 25, 21)
+    resid = np.zeros((21, 21))
+    resid[10, 10] = 1.0
+    p_row, _ = residual_max_seed(resid, np.zeros_like(resid), x, y, None, 0.0,
+                                 kind="power")
+    ph_row, _ = residual_max_seed(resid, np.zeros_like(resid), x, y, None, 0.0,
+                                  kind="phase")
+    assert p_row[2] == pytest.approx(1.0 / S2)
+    assert ph_row[2] == pytest.approx(1.0 / S2)
+    assert p_row[4] == pytest.approx(5.0 / S2)
+    assert ph_row[4] == pytest.approx(5.0), "recikappa floor, no rescale"
+
+
 def test_seeds_from_stats_respects_freq_limits():
     import pandas as pd
     stats = pd.DataFrame({
@@ -213,7 +282,7 @@ def test_seeds_from_stats_respects_freq_limits():
 
 def test_fit_param_basis_end_to_end():
     """Driver: watershed seeding + fitting, recovering known modes."""
-    truth = np.array([
+    truth = _power_modes([
         [3.0, 13.5, 1.2, 10.0, 6.0, 0.0],
         [1.5, 6.0, 1.8, 2.0, 5.0, 0.0],
     ])
@@ -235,7 +304,7 @@ def test_accepts_either_soph_orientation():
     (n_freq, n_feature); MATLAB sniffs the shape, so we must too."""
     from pydynamo.soph.paramfit.core import orient_soph
 
-    truth = np.array([[3.0, 13.5, 1.2, 10.0, 6.0, 0.0]])
+    truth = _power_modes([[3.0, 13.5, 1.2, 10.0, 6.0, 0.0]])
     soph = _make_power_soph(truth)                 # (n_freq, n_feature)
     assert soph.shape == (FREQ_BINS.size, POWER_BINS.size)
 
@@ -267,10 +336,133 @@ def test_matlab_prctile_convention():
     assert np.isnan(prctile(np.array([np.nan]), 50))
 
 
+def test_kernel_widths_are_true_standard_deviations():
+    """z(mean + sigma) / z(mean) == exp(-1/2) on every Gaussian axis.
+
+    Nothing else in this file pins the *scale* of a width. The recovery tests
+    synthesize and fit with the same kernel, so they pass identically under
+    any width convention, and the seed/bounds tests only assert frequencies
+    and shapes. A missing (or doubled) factor of one half in either kernel
+    would sail past all of them and silently move every emitted FreqStd /
+    SOpowerStd by sqrt(2).
+    """
+    from pydynamo.soph.paramfit.basis import rot_gauss, vm_gauss
+
+    half = np.exp(-0.5)
+    amp, fmean, fstd, xmean, xstd = 2.0, 13.0, 1.1, 7.0, 4.0
+
+    # rotGauss, unrotated: one sigma out along each principal axis.
+    peak = rot_gauss(xmean, fmean, amp, fmean, fstd, xmean, xstd, 0.0)
+    assert peak == pytest.approx(amp, rel=1e-12)
+    assert rot_gauss(xmean, fmean + fstd, amp, fmean, fstd, xmean, xstd,
+                     0.0) / peak == pytest.approx(half, rel=1e-12)
+    assert rot_gauss(xmean + xstd, fmean, amp, fmean, fstd, xmean, xstd,
+                     0.0) / peak == pytest.approx(half, rel=1e-12)
+
+    # Rotated: one sigma along the rotated frequency axis.
+    th = 0.4
+    dy, dx = fstd * np.cos(th), fstd * np.sin(th)
+    rot = rot_gauss(xmean + dx, fmean + dy, amp, fmean, fstd, xmean, xstd, th)
+    assert rot / amp == pytest.approx(half, rel=1e-12)
+
+    # vmGauss frequency axis, at the phase preference so the von Mises factor
+    # is exactly 1.
+    pref, recikappa = 0.5, 1.0
+    vpeak = vm_gauss(pref, fmean, amp, fmean, fstd, pref, recikappa, 0.0)
+    assert vpeak == pytest.approx(amp, rel=1e-12)
+    assert vm_gauss(pref, fmean + fstd, amp, fmean, fstd, pref, recikappa,
+                    0.0) / vpeak == pytest.approx(half, rel=1e-12)
+
+    # vmGauss phase axis: `recikappa` was ALWAYS a true sigma, carried by the
+    # von Mises factor itself, so it must NOT have picked up a half. The
+    # relation is exact only in the small-angle limit.
+    rk = 1e-3
+    vm_small = vm_gauss(pref + rk, fmean, amp, fmean, fstd, pref, rk, 0.0)
+    assert vm_small / amp == pytest.approx(half, rel=1e-5)
+
+
+def test_rust_and_python_kernels_share_one_width_convention():
+    """The fitted widths must come back in the units `basis.py` evaluates.
+
+    This module is a hybrid: `dynamo_rs.fit_rotgauss` does the nonlinear fit,
+    then `core.py` re-evaluates the answer with the *Python* kernel to build
+    `model_soph` and to run the overlap / revert checks. If the two kernels
+    disagree on the width convention, the fit still converges (the model
+    family is the same, just reparameterized) and r-squared still hits 1, so
+    every other test in this file stays green while `model_soph` and every
+    emitted FreqStd / SOpowerStd are wrong by sqrt(2).
+
+    Planting a noiseless surface with the Python kernel and seeding at truth
+    makes the fit an identity, so any width ratio other than 1 is a convention
+    mismatch and nothing else.
+    """
+    truth = _power_modes([[3.0, 13.5, 1.2, 10.0, 6.0, 0.0]])
+    soph = _make_power_soph(truth, background=(0.0, 0.0, 0.05))
+    opts = ParamBasisOpts.power(max_peaks=1, criterion="max", min_amp=0.0)
+    res = fit_param_basis_axis(soph, POWER_BINS, FREQ_BINS, opts,
+                               seed_modes=truth)
+
+    assert res.params.shape[0] == 1
+    assert res.params[0, 2] == pytest.approx(truth[0, 2], rel=1e-4), \
+        "fitted fstd is not in the Python kernel's sigma units"
+    assert res.params[0, 4] == pytest.approx(truth[0, 4], rel=1e-4), \
+        "fitted SO-power width is not in the Python kernel's sigma units"
+
+
+def test_rot_gauss_integrates_to_two_pi_sigma_product():
+    """Volume == amp * 2*pi*fstd*xstd, the bivariate-normal normalizer.
+
+    Complements the half-width relation: this one fails for a *rescaled* width
+    even if the exponent's half is right, so together they pin both the shape
+    and the units.
+    """
+    from pydynamo.soph.paramfit.basis import rot_gauss
+
+    amp, fmean, fstd, xmean, xstd, th = 3.0, 0.0, 1.1, 0.0, 4.0, 0.3
+    x = np.linspace(-60.0, 60.0, 4001)
+    y = np.linspace(-30.0, 30.0, 4001)
+    X, Y = np.meshgrid(x, y)
+    z = rot_gauss(X, Y, amp, fmean, fstd, xmean, xstd, th)
+    vol = z.sum() * (x[1] - x[0]) * (y[1] - y[0])
+    assert vol == pytest.approx(amp * 2 * np.pi * fstd * xstd, rel=1e-6)
+
+
+def test_vm_gauss_frequency_marginal_integrates_to_sqrt_two_pi_sigma():
+    """The vmGauss Gaussian factor carries the same sqrt(2*pi)*sigma mass."""
+    from pydynamo.soph.paramfit.basis import vm_gauss
+
+    amp, fmean, fstd, pref, recikappa = 2.0, 0.0, 1.7, 0.25, 1.0
+    y = np.linspace(-30.0, 30.0, 40001)
+    # theta = 0 and x = pref pins the von Mises factor at exactly 1, leaving
+    # the pure Gaussian in frequency.
+    z = vm_gauss(pref, y, amp, fmean, fstd, pref, recikappa, 0.0)
+    assert z.sum() * (y[1] - y[0]) == pytest.approx(
+        amp * np.sqrt(2 * np.pi) * fstd, rel=1e-8)
+
+
+def test_default_width_bounds_are_in_sigma_units():
+    """The bound literals must be the historical ones over sqrt(2).
+
+    Phase slot 4 is `recikappa` and is deliberately NOT rescaled; asserting it
+    here is what stops a future blanket column-4 divide.
+    """
+    power = ParamBasisOpts.power()
+    assert power.UB_default[2] == pytest.approx(2.5 / S2)
+    assert power.LB_default[2] == pytest.approx(0.1 / S2)
+    assert power.UB_default[4] == pytest.approx(30.0 / S2)
+    assert power.LB_default[4] == pytest.approx(2.5 / S2)
+
+    phase = ParamBasisOpts.phase()
+    assert phase.UB_default[2] == pytest.approx(np.sqrt(15.0) / S2)
+    assert phase.LB_default[2] == pytest.approx(1.0 / S2)
+    assert phase.UB_default[4] == pytest.approx(2 * np.pi), "recikappa UB"
+    assert phase.LB_default[4] == pytest.approx(np.pi / 5), "recikappa LB"
+
+
 def test_phase_axis_runs_and_wraps():
     """The phase axis uses the vmGauss kernel and a circular x axis."""
     phase_bins = np.linspace(-np.pi, np.pi, 51)
-    truth = np.array([[2.0, 13.0, 2.0, 0.6, 1.0, 0.05]])
+    truth = _phase_modes([[2.0, 13.0, 2.0, 0.6, 1.0, 0.05]])
     soph = eval_modes(truth, phase_bins, FREQ_BINS, kind="phase",
                       background=np.array([0.01, 0.2, 0.1]),
                       unit_row=True)
@@ -474,7 +666,7 @@ def test_fused_and_assembled_extraction_agree_on_seeds():
     """
     from pydynamo.soph.paramfit.histpeaks import extract_hist_peaks
 
-    truth = np.array([
+    truth = _power_modes([
         [3.0, 13.5, 1.2, 10.0, 6.0, 0.0],
         [1.5, 6.0, 1.8, 2.0, 5.0, 0.0],
     ])
@@ -499,7 +691,7 @@ def test_gof_matches_the_selected_iteration_not_the_last():
     DYNAM-O PR #79 fixed MATLAB to select `fitobj` and `gof` together.
     Keep the Python port on that same contract.
     """
-    truth = np.array([[3.0, 13.5, 1.2, 10.0, 6.0, 0.0]])
+    truth = _power_modes([[3.0, 13.5, 1.2, 10.0, 6.0, 0.0]])
     soph = _make_power_soph(truth)
     # max_peaks=3 with a strict criterion forces a revert after iteration 1.
     opts = ParamBasisOpts.power(max_peaks=3, criterion="minpctr2",
