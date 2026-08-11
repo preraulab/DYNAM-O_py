@@ -20,4 +20,9 @@ from pydynamo import matlab_api  # noqa: F401  — exposed for `py.pydynamo.matl
 __all__ = ["run_dynamo", "DynamoOutput", "DetectionOpts", "BaselineOpts",
            "SOPHOpts", "ParamBasisOpts", "ParamFitResult", "SplineBasisOpts",
            "SplineFitResult", "SplineObject", "matlab_api"]
-__version__ = "0.1.0"
+
+try:
+    from importlib.metadata import PackageNotFoundError, version as _pkg_version
+    __version__ = _pkg_version("pydynamo")
+except PackageNotFoundError:  # running from a source tree, not installed
+    __version__ = "0.2.0"
