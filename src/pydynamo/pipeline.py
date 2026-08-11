@@ -157,6 +157,11 @@ class DynamoOutput:
     SOPHs: SOPHsResult
     fig: Any = None
     timings: dict | None = None    # matches MATLAB `timings` struct fields
+    # §8.1 stamp for this run (pydynamo.io.stamp.Provenance): which
+    # pydynamo build produced these numbers and whether the dynamo_rs
+    # kernel or a pure-Python fallback computed them. The pydynamo.io
+    # writers accept it directly.
+    provenance: Any = None
 
 
 def run_dynamo(
@@ -566,8 +571,14 @@ def run_dynamo(
     if verbose:
         print(f"\n[dynamo] total wallclock: {timings['total']:.1f}s")
 
+    # Imported here, not at module top, so the numeric core stays
+    # importable without the pydynamo.io writer dependencies. Stamped
+    # after all compute so a kernel fallback anywhere above is reflected
+    # as kernel_version='python-native'.
+    from pydynamo.io.stamp import current_stamp
+
     return DynamoOutput(
         stats_table=stats, spect=spect_for_plot, stimes=stimes_for_plot,
         sfreqs=sfreqs, artifacts=artifacts, SOPHs=sophs, fig=fig,
-        timings=timings,
+        timings=timings, provenance=current_stamp(),
     )

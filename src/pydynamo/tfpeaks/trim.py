@@ -18,6 +18,8 @@ from __future__ import annotations
 import numpy as np
 from scipy import ndimage as ndi
 
+from pydynamo import _kernel
+
 try:
     import dynamo_rs as _dynamo_rs
     _HAS_RUST_TRIM = True
@@ -74,6 +76,10 @@ def trim_regions(
                     continue
                 borders[int(lab)] = _boundary_indices(trimmed.shape, flat)
         return trimmed, borders
+    if not _HAS_RUST_TRIM:
+        # Only the kernel-missing case is a provenance fallback; an
+        # explicit use_rust=False (tests, benchmarks) is a caller choice.
+        _kernel.record_fallback("trim_regions")
     shifted = np.where(data > shift_val, data - shift_val, 0.0)
 
     out_labels = np.zeros_like(labels)

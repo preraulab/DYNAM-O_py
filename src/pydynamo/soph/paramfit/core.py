@@ -37,6 +37,7 @@ from pydynamo.soph.paramfit.output import (
     create_params_table,
 )
 from pydynamo.soph.paramfit.seed import residual_max_seed
+from pydynamo import _kernel
 from pydynamo.soph.paramfit.select import select_iteration
 
 try:
@@ -102,6 +103,9 @@ def _fit_once(soph_win, x_win, y_win, B0, LB, UB, opts):
     """One bounded nonlinear fit of the whole mode stack. Returns the raw
     dict from the Rust kernel."""
     if _rs is None:
+        # No pure-Python fit exists; record the absence so any partial
+        # outputs from this process stamp as python-native, then refuse.
+        _kernel.record_fallback("fit_rotgauss/fit_vmgauss")
         raise ImportError(
             "dynamo_rs is required for parametric basis fitting; rebuild the "
             "coordinated native extensions with the DYNAM-O_toolbox controlled "
