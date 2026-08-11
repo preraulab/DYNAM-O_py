@@ -139,7 +139,25 @@ other PEP 517 build commands as controlled release artifacts.
 
 Python runtime deps (installed automatically by `pip install -e .`):
 numpy ≥ 1.24, scipy ≥ 1.11, scikit-image ≥ 0.22, matplotlib ≥ 3.7, pandas ≥ 2.0,
-joblib ≥ 1.3, tqdm ≥ 4.65, colorcet ≥ 3.0.
+joblib ≥ 1.3, tqdm ≥ 4.65, colorcet ≥ 3.0, dynamo_rs ≥ 0.2.1 (built by the
+bootstrap, not fetched from PyPI), tifffile ≥ 2023.7.10, h5py ≥ 3.9.
+
+### Verify the install
+
+The bootstrap already runs `scripts/check_install.py` (it checks that
+`pydynamo`, `dynamo_rs`, and the multitaper Rust backend all import with
+the expected surface). To re-check by hand from the activated venv:
+
+```bash
+python -c "import pydynamo; print(pydynamo.__version__)"
+python -c "from pydynamo.io.stamp import current_stamp; print(current_stamp())"
+python scripts/check_install.py     # from DYNAM-O_py/
+```
+
+The `current_stamp()` line shows the provenance every written artifact
+gets: `writer_version` is this package's build and `kernel_version` is
+the `dynamo_rs` build (`<semver>+<sha12>[.dirty]`). A `kernel_version`
+of `unknown` means `dynamo_rs` did not import — rerun the bootstrap.
 
 ## Usage
 
@@ -173,24 +191,51 @@ above 50 Hz (e.g., gamma analysis beyond pydynamo's analyzed band).
 
 ### Basic call
 
+The bundled example EEG ships with the sibling MATLAB checkout: in the
+`DYNAM-O_toolbox` layout it is `../DYNAM-O/example_data/example_data.mat`,
+next to `runExampleData.m`. The three option values below reproduce that
+script's `'segment'` preset (`time_range = [8420 13446]`,
+`SOpower_min_time_in_bin = 5`, `SOphase_min_peak_at_freq = 10`); omit
+them for the full-night defaults.
+
 ```python
+import matplotlib.pyplot as plt
 import scipy.io as sio
 from pydynamo import run_dynamo
 
-m = sio.loadmat("example_data.mat", simplify_cells=True)
+m = sio.loadmat("../DYNAM-O/example_data/example_data.mat", simplify_cells=True)
 out = run_dynamo(
     m["data"].ravel(),
     float(m["Fs"]),
     m["stage_times"],
     m["stage_vals"],
-    # MATLAB runExampleData.m 'segment' overrides (omit for full-night defaults)
+    # MATLAB runExampleData.m 'segment' preset (omit for full-night defaults)
     time_range=(8420.0, 13446.0),
     min_time_in_bin=5,
     min_peak_at_freq=10,
 )
+plt.show()                          # out.fig is the MATLAB-style summary figure
 print(out.stats_table.head())       # per-peak stats
-print(out.SOPHs.SOpower_mat.shape)  # (freq_bins, SOpower_bins)
+print(out.SOPHs.SOpower_mat.shape)  # (SOpower_bins, freq_bins)
 print(out.SOPHs.SOpower_paramfit.params_table)
+print(out.provenance)               # which build computed the numbers
+```
+
+`run_dynamo` builds the summary figure by default (`plot=True`) and keeps
+it as `out.fig` — `out.fig.savefig("summary.png", dpi=200)` writes it out.
+To re-render a figure without re-running the pipeline, `summary_plot` is
+importable directly and takes the arrays a run produces:
+
+```python
+import numpy as np
+from pydynamo import summary_plot
+
+t = np.arange(len(out.artifacts)) / float(m["Fs"]) + 8420.0
+fig = summary_plot(
+    out.spect, out.stimes, out.sfreqs, out.artifacts, t,
+    m["stage_times"], m["stage_vals"], out.stats_table, out.SOPHs,
+    time_range=(8420.0, 13446.0),
+)
 ```
 
 Each parametric-fit result keeps the legacy numeric `params` array and also
@@ -198,6 +243,42 @@ provides `params_table`, a pandas DataFrame with MATLAB-compatible named
 columns such as `Volume`, power-mode `PrefPhase`/`Coupling`, and the per-mode
 `Pk*` TF-peak summaries. Zero-mode fits retain the same named columns with no
 rows.
+
+### Batch example
+
+Loop a cohort and write the canonical output tree (see "Reading and
+writing the DYNAM-O output tree" below) so the results open in the
+desktop app, `dynamo-cli`, and the MATLAB Results Browser. EDF inputs
+load via `pydynamo.io_edf.read_edf` / `read_staging`:
+
+```python
+import pydynamo.io as pio
+from pydynamo import run_dynamo
+from pydynamo.io_edf import read_edf, read_staging
+
+root, channel = "results", "C3"
+for subject in ("S001", "S002"):
+    edf = read_edf(f"/data/{subject}.edf", label=channel)
+    times, vals = read_staging(f"/data/{subject}_stages.csv")
+    out = run_dynamo(edf["data"], edf["fs"], times, vals, plot=False)
+    s = out.SOPHs
+    pio.write_stats_csv(out.stats_table,
+                        pio.stats_csv_path(root, subject, channel),
+                        out.provenance, subject_id=subject)
+    pio.write_soph_tiff(pio.soph_tiff_path(root, subject, channel, "power"),
+                        s.SOpower_mat, s.SOpower_bins, s.freq_bins,
+                        "sopower", subject)
+    pio.write_soph_tiff(pio.soph_tiff_path(root, subject, channel, "phase"),
+                        s.SOphase_mat, s.SOphase_bins, s.freq_bins,
+                        "sophase", subject)
+    pio.append_run_item(root, subject=subject, channel=channel,
+                        input_file=f"/data/{subject}.edf",
+                        peaks=len(out.stats_table))
+```
+
+The same pattern extends to the paramfit CSVs, splinefit TIFFs, and the
+auxiliary-data h5 (`pio.write_paramfit_csv`, `pio.write_splinefit_tiff`,
+`pio.write_auxiliary_data_h5`).
 
 ## Reading and writing the DYNAM-O output tree
 
@@ -255,6 +336,33 @@ run('<path-to-DYNAM-O_py>/scripts/export_pass1_diagnostics.m')
 ```
 
 These populate `data_cache/` with `.mat` / `.csv` files (not version-controlled).
+
+## Troubleshooting
+
+- **NaNs in `data`** — `run_dynamo` expects a finite EEG vector. NaN
+  samples propagate through the multitaper spectrogram and poison the
+  baseline percentile. Repair or crop the recording first (NaN gaps from
+  hardware dropouts are usually detected by the artifact stage anyway
+  once replaced with zeros, but explicit cropping via `time_range` is
+  cleaner).
+- **`stage_times` / `stage_vals` mismatch** — the two vectors must be the
+  same length, in seconds since the start of `data` (not clock time), and
+  cover the span you analyze. `run_dynamo` derives its default
+  `time_range` from the first and last valid stage, so staging that does
+  not overlap the recording produces `No valid stages found` or an empty
+  analysis window.
+- **Empty or inverted histograms** — almost always the stage convention.
+  DYNAM-O uses `1=N3, 2=N2, 3=N1, 4=REM, 5=Wake` (see "Stage
+  convention" above), reversed from most EDF stagers; histograms default
+  to NREM stages `(1, 2, 3)`. `pydynamo.io_edf.read_staging` already
+  returns DYNAM-O codes.
+- **`dynamo_rs` missing** — most stages fall back to pure Python /
+  scipy / scikit-image. The first fallback fires a single
+  `RuntimeWarning` and every artifact written from that process is
+  stamped `kernel_version='python-native'` instead of the Rust build id
+  (the parametric and spline fits have no Python fallback and raise
+  `ImportError`). Rerun the DYNAM-O_toolbox bootstrap to rebuild the
+  kernel.
 
 ## Tests
 
