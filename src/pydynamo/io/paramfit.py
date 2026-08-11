@@ -163,3 +163,76 @@ def write_paramfit_csv(
         f.write(header + "\n")
         for _, row in table.iterrows():
             f.write(",".join(_cell(row, name) for name in columns) + "\n")
+
+
+def _parse_metadata(extras: dict) -> dict:
+    """Post-process the raw preamble strings into typed metadata.
+
+    ``n_modes`` becomes an int, the ``background.*`` / ``gof.*`` /
+    ``unit_row`` values floats, and the bin arrays NumPy vectors (JSON
+    ``null`` -> NaN). Unknown keys pass through as raw strings (§8.3
+    rule 3); unparseable values are also left as raw strings rather
+    than failing the read.
+    """
+    import json
+
+    meta: dict = {}
+    for key, raw in extras.items():
+        try:
+            if key == "n_modes":
+                meta[key] = int(raw)
+            elif (key.startswith("background.") or key.startswith("gof.")
+                    or key == "unit_row"):
+                meta[key] = float(raw) if raw != "NaN" else math.nan
+            elif key.endswith("_bins"):
+                values = json.loads(raw)
+                meta[key] = np.array(
+                    [math.nan if v is None else float(v) for v in values],
+                    dtype=float,
+                )
+            else:
+                meta[key] = raw
+        except (ValueError, json.JSONDecodeError):
+            meta[key] = raw
+    return meta
+
+
+def read_paramfit_csv(path: Path | str):
+    """Read a paramfit CSV, accepting formats 1, 2, and 3 (§8.2).
+
+    Returns ``(df, metadata, provenance)``:
+
+    * ``df`` — the per-mode data table with the file's own columns
+      (older formats carried different estimator column sets; they are
+      returned as-is);
+    * ``metadata`` — the typed non-stamp preamble entries
+      (``fit_type``, ``n_modes``, ``subjectID``, ``background.*``,
+      ``gof.*``, ``unit_row``, and the bin-center arrays);
+    * ``provenance`` — the §8.1 stamp; the legacy ``# version:`` /
+      ``# code_version:`` keys of formats 1-2 map onto ``format`` /
+      ``writer_version``.
+
+    Format 1 emitted √2·σ widths and must never be pooled with 2/3
+    (§8.3 rule 5) — check ``provenance.format`` before aggregating.
+    """
+    import pandas as pd
+    from pydynamo.io.stamp import parse_preamble
+
+    path = Path(path)
+    with open(path, encoding="utf-8") as f:
+        lines = f.read().splitlines()
+
+    stamp, extras = parse_preamble(lines)
+    n_preamble = 0
+    for line in lines:
+        if not line.startswith("#"):
+            break
+        n_preamble += 1
+    body = lines[n_preamble:]
+    if not body:
+        raise ValueError(f"paramfit_csv {path} has no data table")
+
+    from io import StringIO
+
+    df = pd.read_csv(StringIO("\n".join(body)))
+    return df, _parse_metadata(extras), stamp

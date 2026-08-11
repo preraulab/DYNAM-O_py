@@ -94,3 +94,35 @@ def write_splinefit_tiff(
             metadata=None,
         )
         tif.write(splinefit, photometric="minisblack", metadata=None)
+
+
+def read_splinefit_tiff(
+    path: Path | str,
+) -> tuple[np.ndarray, np.ndarray, dict, Provenance]:
+    """Read a splinefit TIFF written by any DYNAM-O implementation.
+
+    Returns ``(coefs, splinefit, metadata, provenance)``: the two f32
+    pages as float64 arrays and the decoded page-1 ImageDescription
+    JSON (knot / bin arrays as NumPy vectors). Format-1 files
+    (string-valued ``format``, no stamp) yield
+    ``provenance.format == 1``.
+    """
+    from pydynamo.io.soph_tiff import _stamp_from_meta
+
+    path = Path(path)
+    with tifffile.TiffFile(path) as tif:
+        if len(tif.pages) < 2:
+            raise ValueError(
+                f"splinefit TIFF {path} has {len(tif.pages)} page(s), "
+                "expected 2 (coefs + splinefit)"
+            )
+        coefs = np.asarray(tif.pages[0].asarray(), dtype=np.float64)
+        splinefit = np.asarray(tif.pages[1].asarray(), dtype=np.float64)
+        description = tif.pages[0].description
+        meta = json.loads(description) if description else {}
+
+    for key in ("knots_x", "knots_y", "freq_bins", "SOpower_bins",
+                "SOphase_bins"):
+        if key in meta:
+            meta[key] = np.asarray(meta[key], dtype=float)
+    return coefs, splinefit, meta, _stamp_from_meta(meta)

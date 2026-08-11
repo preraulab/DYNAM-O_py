@@ -145,3 +145,75 @@ def write_auxiliary_data_h5(
             )
         if subject_id:
             _write_string_scalar(f, "subjectID", subject_id)
+
+
+def _read_string_scalar(f: h5py.File, name: str) -> str | None:
+    if name not in f:
+        return None
+    value = np.asarray(f[name][()]).ravel()[0]
+    if isinstance(value, bytes):
+        return value.decode("utf-8")
+    return str(value)
+
+
+def read_auxiliary_data_h5(path: Path | str) -> tuple[dict, Provenance]:
+    """Read an aux file written by any DYNAM-O implementation.
+
+    Returns ``(aux, provenance)``. ``aux`` mirrors the writer's keyword
+    arguments — ``fs``, ``so_power_norm``, ``so_power_t_start``,
+    ``so_power_norm_method``, ``so_power_window_params``,
+    ``so_power_freqrange``, ``artifact_spans``, ``stage_times``,
+    ``stage_vals``, ``subject_id`` — with ``None`` / empty values for
+    optional datasets that are absent (legacy files predate several).
+    Unknown datasets are ignored (§2.3); a missing stamp yields an
+    all-``None`` provenance except ``format`` (format-1 files carried
+    ``code_version`` only, surfaced as ``writer_version``).
+    """
+    path = Path(path)
+    with h5py.File(path, "r") as f:
+        def _scalar(name):
+            return (float(np.asarray(f[name][()]).ravel()[0])
+                    if name in f else None)
+
+        def _vector(name):
+            return (np.asarray(f[name][()], dtype=np.float64).ravel()
+                    if name in f else np.array([], dtype=np.float64))
+
+        fmt = _scalar("format")
+        stamp = Provenance(
+            format=int(fmt) if fmt is not None else None,
+            writer=_read_string_scalar(f, "writer"),
+            writer_version=_read_string_scalar(f, "writer_version"),
+            kernel_version=_read_string_scalar(f, "kernel_version"),
+        )
+        if stamp.writer_version is None:
+            # Legacy dataset (format 1): code_version was the writing
+            # tool's build.
+            stamp.writer_version = _read_string_scalar(f, "code_version")
+
+        window = _vector("SOpower_window_params")
+        freqrange = _vector("SOpower_freqrange")
+        aux = {
+            "fs": _scalar("Fs"),
+            "so_power_norm": _vector("SOpower_norm"),
+            "so_power_t_start": _scalar("SOpower_t_start"),
+            "so_power_norm_method": _read_string_scalar(
+                f, "SOpower_norm_method"),
+            "so_power_window_params": (
+                (float(window[0]), float(window[1]))
+                if window.size >= 2 else None),
+            "so_power_freqrange": (
+                (float(freqrange[0]), float(freqrange[1]))
+                if freqrange.size >= 2 else None),
+            "artifact_spans": (
+                np.asarray(f["artifact_spans"][()], dtype=np.float64)
+                .reshape(-1, 2)
+                if "artifact_spans" in f
+                else np.empty((0, 2), dtype=np.float64)),
+            "stage_times": _vector("stage_times"),
+            "stage_vals": (
+                np.asarray(f["stage_vals"][()], dtype=np.uint8).ravel()
+                if "stage_vals" in f else np.array([], dtype=np.uint8)),
+            "subject_id": _read_string_scalar(f, "subjectID") or "",
+        }
+    return aux, stamp

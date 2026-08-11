@@ -38,11 +38,17 @@ from pydynamo.io.tree import (
     splinefit_tiff_path,
     stats_csv_path,
 )
-from pydynamo.io.stats import write_stats_csv
-from pydynamo.io.paramfit import write_paramfit_csv
-from pydynamo.io.soph_tiff import write_soph_tiff
-from pydynamo.io.splinefit_tiff import write_splinefit_tiff
-from pydynamo.io.aux_h5 import write_auxiliary_data_h5
+from pydynamo.io.stats import read_stats_csv, write_stats_csv
+from pydynamo.io.paramfit import read_paramfit_csv, write_paramfit_csv
+from pydynamo.io.soph_tiff import read_soph_tiff, write_soph_tiff
+from pydynamo.io.splinefit_tiff import (
+    read_splinefit_tiff,
+    write_splinefit_tiff,
+)
+from pydynamo.io.aux_h5 import (
+    read_auxiliary_data_h5,
+    write_auxiliary_data_h5,
+)
 from pydynamo.io.runs_jsonl import (
     append_run_header,
     append_run_item,
@@ -68,6 +74,11 @@ __all__ = [
     "write_soph_tiff",
     "write_splinefit_tiff",
     "write_auxiliary_data_h5",
+    "read_stats_csv",
+    "read_paramfit_csv",
+    "read_soph_tiff",
+    "read_splinefit_tiff",
+    "read_auxiliary_data_h5",
     "append_run_header",
     "append_run_item",
     "runs_jsonl_path",

@@ -54,6 +54,10 @@ def load_example_data(path: Path = DEFAULT_EXAMPLE_DATA) -> dict[str, Any]:
 
 
 def load_stats_csv(path: Path) -> "Any":
-    """Load the MATLAB-exported stats_table CSV as a pandas DataFrame."""
+    """Load the MATLAB-exported stats_table CSV as a pandas DataFrame.
+
+    Skips the leading ``#`` provenance preamble that format-3 stats CSVs
+    carry (OUTPUT_FORMAT.md §8.1); bare legacy files are unaffected.
+    """
     import pandas as pd  # lazy import so tests can skip if pandas absent
-    return pd.read_csv(path)
+    return pd.read_csv(path, comment="#")

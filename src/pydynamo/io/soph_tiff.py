@@ -87,3 +87,40 @@ def write_soph_tiff(
         description=json.dumps(meta),
         metadata=None,
     )
+
+
+def _stamp_from_meta(meta: dict) -> Provenance:
+    """Recover the §8.1 stamp from ImageDescription JSON.
+
+    A string-valued or absent ``format`` means format 1 (§8.3 rule 2):
+    the pixel-layout note lived in ``format`` and no stamp was written.
+    """
+    fmt = meta.get("format")
+    return Provenance(
+        format=fmt if isinstance(fmt, int) else 1,
+        writer=meta.get("writer"),
+        writer_version=meta.get("writer_version"),
+        kernel_version=meta.get("kernel_version"),
+    )
+
+
+def read_soph_tiff(path: Path | str) -> tuple[np.ndarray, dict, Provenance]:
+    """Read a SOPH TIFF written by any DYNAM-O implementation.
+
+    Returns ``(hist, metadata, provenance)`` where ``hist`` is the
+    float64 ``(n_so, n_freq)`` histogram and ``metadata`` the decoded
+    ImageDescription JSON (bin arrays as NumPy vectors under both the
+    Rust-native and MATLAB-alias keys). Format-1 files (string-valued
+    ``format``, no stamp) yield ``provenance.format == 1``.
+    """
+    path = Path(path)
+    with tifffile.TiffFile(path) as tif:
+        page = tif.pages[0]
+        hist = np.asarray(page.asarray(), dtype=np.float64)
+        meta = json.loads(page.description) if page.description else {}
+
+    for key in ("row_centers", "col_centers", "SOpower_bins",
+                "SOphase_bins", "freq_bins"):
+        if key in meta:
+            meta[key] = np.asarray(meta[key], dtype=float)
+    return hist, meta, _stamp_from_meta(meta)

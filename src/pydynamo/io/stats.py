@@ -24,7 +24,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from pydynamo.io.stamp import Provenance
+from pydynamo.io.stamp import Provenance, parse_preamble
 
 #: Stats-CSV schema version this module writes (§8.2): format 3 = the
 #: 14-column layout plus the `#` provenance preamble. Format 2 was the
@@ -181,3 +181,47 @@ def write_stats_csv(
                 other(so_power[i]),
                 ph(so_phase[i]),
             )) + "\n")
+
+
+def read_stats_csv(path: Path | str) -> tuple[pd.DataFrame, Provenance]:
+    """Read a canonical stats CSV, accepting formats 1, 2, and 3 (§8.2).
+
+    * format 3 — `#` preamble + the 14-column header;
+    * format 2 — the same 14 columns bare;
+    * format 1 — the bare legacy 16-column header (with the redundant
+      ``bbox_width_s`` / ``bbox_height_Hz`` extent columns).
+
+    Returns ``(df, provenance)``. ``df`` carries exactly the columns of
+    the file's own header; for the 14-column layouts the bbox extents
+    equal ``Duration`` / ``Bandwidth``, so nothing is lost. When the
+    preamble carries no ``format`` key it is inferred from the column
+    count (16 -> 1, 14 -> 2, §8.3 rule 2). Any other header raises
+    ``ValueError``.
+    """
+    path = Path(path)
+    with open(path, encoding="utf-8") as f:
+        lines = f.read().splitlines()
+
+    stamp, _extras = parse_preamble(lines)
+    n_preamble = 0
+    for line in lines:
+        if not line.startswith("#"):
+            break
+        n_preamble += 1
+    body = lines[n_preamble:]
+    if not body:
+        raise ValueError(f"stats_csv {path} is empty")
+    header = body[0].strip()
+    if header == STATS_CSV_HEADER:
+        inferred = 2
+    elif header == STATS_CSV_HEADER_V1:
+        inferred = 1
+    else:
+        raise ValueError(f"stats_csv {path} has unexpected header: {header}")
+    if stamp.format is None:
+        stamp.format = inferred
+
+    from io import StringIO
+
+    df = pd.read_csv(StringIO("\n".join(body)))
+    return df, stamp
