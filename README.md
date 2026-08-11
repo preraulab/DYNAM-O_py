@@ -199,6 +199,33 @@ columns such as `Volume`, power-mode `PrefPhase`/`Coupling`, and the per-mode
 `Pk*` TF-peak summaries. Zero-mode fits retain the same named columns with no
 rows.
 
+## Reading and writing the DYNAM-O output tree
+
+The numeric core is in-memory-only; the `pydynamo.io` package holds the
+readers and writers for the canonical on-disk results tree shared by
+`dynamo-cli`, the desktop app, and the MATLAB toolbox. The normative
+spec is `documents/OUTPUT_FORMAT.md` in the DYNAM-O_DesktopApp repo —
+§1-2 for the tree layout and filenames, §8 for the provenance stamp
+every artifact carries (`format` / `writer` / `writer_version` /
+`kernel_version`).
+
+```python
+import pydynamo.io as pio
+
+out = run_dynamo(...)                       # out.provenance is the run's stamp
+p = pio.stats_csv_path(root, "S001", "C3")  # <root>/C3/TFpeaks/S001_stats_table_C3.csv
+pio.write_stats_csv(out.stats_table, p, out.provenance, subject_id="S001")
+df, prov = pio.read_stats_csv(p)            # accepts formats 1/2/3
+```
+
+Writers exist for every per-(subject, channel) artifact: the stats CSV,
+SOPH and splinefit TIFFs, paramfit CSVs, the auxiliary-data HDF5, and
+the `_runs/*.jsonl` run index. Readers accept the legacy formats per
+the spec's §8.3 tolerance rules and return the recovered provenance
+alongside the data. When the `dynamo_rs` kernel is unavailable and a
+pure-Python fallback computes the numbers, stamps report
+`kernel_version='python-native'`.
+
 ## Stage convention
 
 DYNAM-O uses `1=N3, 2=N2, 3=N1, 4=REM, 5=Wake` — reversed from most EDF

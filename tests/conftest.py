@@ -60,3 +60,19 @@ def example_data():
     if not path.exists():
         pytest.skip(f"{path} not found.")
     return sio.loadmat(str(path), simplify_cells=True)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_kernel_fallback_latch():
+    """Keep the process-wide fallback latch from leaking between tests.
+
+    Parity tests deliberately monkeypatch the per-module _HAS_RUST flags
+    to exercise the pure-Python fallbacks, which (correctly) latches
+    pydynamo._kernel.FALLBACK_ACTIVE. In production the latch is
+    process-lifetime by design; in the suite it must not make later
+    provenance assertions order-dependent.
+    """
+    from pydynamo import _kernel
+    saved = _kernel.FALLBACK_ACTIVE
+    yield
+    _kernel.FALLBACK_ACTIVE = saved
