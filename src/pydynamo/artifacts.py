@@ -33,6 +33,8 @@ import numpy as np
 from scipy.signal import cheby1, sosfiltfilt as _sp_sosfiltfilt, hilbert as _sp_hilbert
 from scipy.ndimage import median_filter
 
+from pydynamo import _kernel
+
 # scipy's sosfiltfilt + hilbert are faster than our Rust port on single
 # long signals (scipy has SIMD-vectorized C kernels -- scipy beats Rust even
 # with rustfft's NEON default on Apple Silicon; see scripts/bench_signal_rust_vs_scipy.py).
@@ -73,6 +75,11 @@ def _rust_hilbert_envelope(x):
 def _rust_movmean(x, win):
     if _USE_RUST_MOVMEAN and win > 1:
         return _dynamo_rs.movmean(np.ascontiguousarray(x, np.float64).ravel(), int(win))
+    if not _HAS_RUST_MODULE:
+        # The scipy sosfiltfilt/hilbert paths above are the deliberate
+        # primaries (faster than the Rust port); only a missing kernel
+        # makes the Python movmean a provenance fallback.
+        _kernel.record_fallback("movmean")
     return None  # caller falls back to Python _movmean
 
 

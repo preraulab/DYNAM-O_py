@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import numpy as np
 
+from pydynamo import _kernel
+
 try:
     import dynamo_rs as _dynamo_rs
     _HAS_RUST = True
@@ -69,6 +71,7 @@ def compute_baseline(
         )
 
     # ---- Python fallback (kept bit-equivalent to Rust for tests) ----
+    _kernel.record_fallback("compute_baseline")
     idx = np.searchsorted(t_data, stimes)
     idx = np.clip(idx, 0, t_data.size - 1)
     left = np.clip(idx - 1, 0, t_data.size - 1)
@@ -100,4 +103,5 @@ def subtract_baseline(spect: np.ndarray, baseline: np.ndarray) -> np.ndarray:
         spect = np.ascontiguousarray(np.asarray(spect, dtype=np.float64))
         baseline = np.ascontiguousarray(np.asarray(baseline, dtype=np.float64))
         return _dynamo_rs.subtract_baseline(spect, baseline)
+    _kernel.record_fallback("subtract_baseline")
     return spect / baseline

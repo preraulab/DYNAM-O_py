@@ -5,7 +5,7 @@ import pytest
 
 def test_pydynamo_imports():
     import pydynamo
-    assert pydynamo.__version__ == "0.1.0"
+    assert pydynamo.__version__ == "0.2.0"
     from pydynamo import (
         BaselineOpts,
         DetectionOpts,

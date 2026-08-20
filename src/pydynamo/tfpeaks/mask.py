@@ -17,6 +17,8 @@ from __future__ import annotations
 import numpy as np
 from skimage.segmentation import find_boundaries
 
+from pydynamo import _kernel
+
 try:
     import dynamo_rs as _dynamo_rs
     _HAS_RUST = True
@@ -46,6 +48,7 @@ def mask_spectrogram(
         return _dynamo_rs.mask_spectrogram(spect_2s, stimes_2s, labels_1s, stimes_1s)
 
     # ---- Python fallback ----
+    _kernel.record_fallback("mask_spectrogram")
     idx = np.searchsorted(stimes_1s, stimes_2s)
     idx = np.clip(idx, 0, labels_1s.shape[1] - 1)
     left = np.clip(idx - 1, 0, labels_1s.shape[1] - 1)

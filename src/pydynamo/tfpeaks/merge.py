@@ -27,6 +27,8 @@ from skimage import morphology
 from skimage.graph import RAG
 from skimage.segmentation import expand_labels, watershed
 
+from pydynamo import _kernel
+
 # Rust fast-path. dynamo_rs.merge_segment(labels, data, merge_thresh,
 # max_merges) returns the merged label image (I32 same shape). Falls back
 # to the pure-Python implementation below if the extension isn't installed.
@@ -161,6 +163,10 @@ def merge_segment(
         )
         return merged.astype(np.int64, copy=False)
 
+    if not _HAS_RUST_MERGE:
+        # Only the kernel-missing case is a provenance fallback; an
+        # explicit use_rust=False (tests, benchmarks) is a caller choice.
+        _kernel.record_fallback("merge_segment")
     rag = build_rag_from_watershed(labels)
     data_flat = data.ravel()
 

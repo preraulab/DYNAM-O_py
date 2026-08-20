@@ -14,6 +14,8 @@ from typing import Literal
 
 import numpy as np
 
+from pydynamo import _kernel
+
 try:
     import dynamo_rs as _dynamo_rs
     _HAS_RUST = hasattr(_dynamo_rs, "tfpeak_histogram")
@@ -145,6 +147,7 @@ def tfpeak_histogram(
             "peak_at_freq": out["peak_at_freq"],
         }
     # ---- Python fallback --------------------------------------------------
+    _kernel.record_fallback("tfpeak_histogram")
 
     # [N_peaks × num_fbins] mask: peak p in freq bin f?
     pf = peak_freqs[:, None]
