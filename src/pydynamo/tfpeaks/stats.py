@@ -16,7 +16,6 @@ swap when mapping to (time, freq).
 
 from __future__ import annotations
 
-import math
 
 import numpy as np
 import pandas as pd
@@ -34,7 +33,7 @@ def compute_peak_stats(
 
     Columns (subset of DYNAM-O):
         PeakTime, PeakFrequency, Height, Area, Duration, Bandwidth, Volume,
-        Peakiness (= 10*log10(Area * Height / Volume), in dB),
+        Peakiness (= N/(N-1) * (max - mean) / (max - min) of region pixels, in [0, 1]),
         BoundingBox (4-tuple: (time_tl, freq_tl, width_s, height_Hz)),
         Boundaries (Nx2 ndarray: column 0 = time (s), column 1 = freq (Hz)),
         HeightData (1D ndarray of per-pixel intensities inside the region),
@@ -107,19 +106,21 @@ def compute_peak_stats(
             boundaries = np.vstack(pieces)
         else:
             boundaries = np.empty((0, 2), dtype=np.float64)
-        # Peakiness in dB = 10*log10(Area * Height / Volume), matching
-        # computePeakStatsTable.m:206 and dynamo_rs extract_pipeline.rs:487.
-        # Degenerate cases:
-        #   volume == 0      → ratio is +∞ or NaN; mark NaN.
-        #   height == 0      → ratio is 0; log10(0) = -∞ (kept as sentinel).
-        #   ratio negative   → shouldn't happen on positive spectrograms; NaN.
-        if volume == 0.0:
-            peakiness = float("nan")
+        # Peakiness = N/(N-1) * (max - mean) / (max - min) of the region's
+        # N pixels, in [0, 1], matching computePeakStatsTable.m and
+        # dynamo_rs extract_pipeline.rs. The N/(N-1) small-sample factor
+        # makes a single-pixel spike score exactly 1 (raw ratio caps at
+        # 1 - 1/N). 0 = flat plateau, 1 = spike. Affine-invariant (gain
+        # and additive pedestal cancel; requires NaN masking, never 0).
+        # Degenerate flat regions (max == min) → NaN.
+        n_px = height_data.size
+        vmax = float(height_data.max()) if n_px else float("nan")
+        vmin = float(height_data.min()) if n_px else float("nan")
+        vmean = float(height_data.mean()) if n_px else float("nan")
+        if vmax > vmin and n_px > 1:
+            peakiness = (n_px / (n_px - 1)) * (vmax - vmean) / (vmax - vmin)
         else:
-            ratio = area * height / volume
-            peakiness = 10.0 * math.log10(ratio) if ratio > 0.0 else (
-                float("-inf") if ratio == 0.0 else float("nan")
-            )
+            peakiness = float("nan")
 
         rows.append({
             "Label": p.label,
