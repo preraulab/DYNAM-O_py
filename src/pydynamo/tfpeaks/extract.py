@@ -277,14 +277,21 @@ def extract_tfpeaks_segment(
         return float(spect[trim_labels == lab].sum()) * d_time * d_freq
     props["Volume"] = [_vol(int(lab)) for lab in props["label"]]
 
-    # Peakiness in dB: 10*log10(Area * Height / Volume)
-    # (computePeakStatsTable.m:206, and dynamo_rs extract_pipeline.rs:487).
-    # Volume == 0 or a non-positive ratio leaves the ratio undefined, so emit
-    # NaN there rather than letting log10 raise or return -inf.
-    with np.errstate(divide="ignore", invalid="ignore"):
-        ratio = props["Area"].to_numpy() * props["Height"].to_numpy() / \
-            props["Volume"].to_numpy()
-        props["Peakiness"] = np.where(ratio > 0.0, 10.0 * np.log10(ratio), np.nan)
+    # Peakiness = N/(N-1) * (max - mean) / (max - min) of the region's N
+    # pixels, in [0, 1] (computePeakStatsTable.m, dynamo_rs
+    # extract_pipeline.rs). The N/(N-1) small-sample factor makes a
+    # single-pixel spike score exactly 1. 0 = flat plateau, 1 = spike;
+    # affine-invariant. Flat regions (max == min) → NaN.
+    def _pk(lab):
+        v = spect[trim_labels == lab]
+        if v.size <= 1:
+            return float("nan")
+        vmax = float(v.max())
+        vmin = float(v.min())
+        if not vmax > vmin:
+            return float("nan")
+        return (v.size / (v.size - 1)) * (vmax - float(v.mean())) / (vmax - vmin)
+    props["Peakiness"] = [_pk(int(lab)) for lab in props["label"]]
 
     # Current MATLAB and Rust use the same inclusive N_pixels * step span for
     # filtering and for the reported Duration/Bandwidth values.
