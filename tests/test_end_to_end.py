@@ -80,6 +80,11 @@ def test_end_to_end_segment(example_data, tmp_path):
         "PkHeight", "PkVolume", "PkArea", "PkPeakiness", "PkSOpower",
         "PkSOphase",
     )
+    # Default assignment is argmax (exclusive): per-mode member counts must
+    # partition the stage-restricted peak population, never exceed it.
+    pk_counts = out.SOPHs.SOpower_paramfit.params_table["PkCount"].to_numpy()
+    assert (pk_counts >= 0).all()
+    assert pk_counts.sum() <= len(out.stats_table)
     assert "fit_param_basis" in out.timings
     assert out.SOPHs.SOpower_splinefit is not None
     assert out.SOPHs.SOphase_splinefit is not None

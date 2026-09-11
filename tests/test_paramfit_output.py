@@ -281,3 +281,122 @@ def test_peak_assign_prob_must_be_strictly_between_zero_and_one(value):
 def test_peak_assign_prob_accepts_numpy_float():
     opts = ParamBasisOpts.phase(peak_assign_prob=np.float64(0.75))
     assert opts.peak_assign_prob == 0.75
+
+
+# ---- peak_assign rule engine (E1-E9; the same analytic fixtures are ----
+# ---- pinned by the Rust mode_peaks tests and the MATLAB tests)      ----
+#
+# Power fixture, theta = 0:
+#   Mode A: amp 10 at (13 Hz, 5 dB),  sigma_f = 1, sigma_p = 10
+#   Mode B: amp  5 at (13 Hz, 25 dB), sigma_f = 1, sigma_p = 10
+
+from pydynamo.soph.paramfit.opts import parse_peak_assign
+from pydynamo.soph.paramfit.output import _assign_mode_peaks
+
+MODE_A = [10.0, 13.0, 1.0, 5.0, 10.0, 0.0]
+MODE_B = [5.0, 13.0, 1.0, 25.0, 10.0, 0.0]
+
+
+def _power_stats(points):
+    return pd.DataFrame(
+        {"PeakFrequency": [p[0] for p in points],
+         "SOpower": [p[1] for p in points]}
+    )
+
+
+def test_e1_background_rule_equals_pstar_contour():
+    # Constant bg 0.5, amp 10 -> p* = 0.95: boundary at 13 + sqrt(2*ln 20).
+    r = np.sqrt(2.0 * np.log(20.0))
+    stats = _power_stats([(13.0 + r - 1e-9, 5.0), (13.0 + r + 1e-3, 5.0)])
+    m = _assign_mode_peaks([MODE_A], "power", stats, "background", [0, 0, 0.5])
+    assert m[:, 0].tolist() == [True, False]
+
+
+def test_e2_background_rule_adapts_to_amp():
+    # amp 5 vs bg 0.5 -> p* = 0.9: power boundary at 25 + sqrt(2*ln 10)*10.
+    b = 25.0 + np.sqrt(2.0 * np.log(10.0)) * 10.0
+    stats = _power_stats([(13.0, b - 0.01), (13.0, b + 0.01)])
+    m = _assign_mode_peaks([MODE_B], "power", stats, "background", [0, 0, 0.5])
+    assert m[:, 0].tolist() == [True, False]
+
+
+def test_e3_background_evaluated_at_the_peak():
+    stats = _power_stats([(13.0, 25.0)])  # d_A ~ 1.3534 there
+    sloped = _assign_mode_peaks([MODE_A], "power", stats, "background", [0.1, 0, 0])
+    assert not sloped[0, 0]
+    flat = _assign_mode_peaks([MODE_A], "power", stats, "background", [0, 0, 0.5])
+    assert flat[0, 0]
+
+
+def test_e4_argmax_is_exclusive():
+    stats = _power_stats([(13.0, 15.0)])
+    both = _assign_mode_peaks([MODE_A, MODE_B], "power", stats, 0.95)
+    assert both[0].tolist() == [True, True]
+    ex = _assign_mode_peaks([MODE_A, MODE_B], "power", stats, "argmax", [0, 0, 0.5])
+    assert ex[0].tolist() == [True, False]
+
+
+def test_e5_background_wins_leaves_unassigned():
+    stats = _power_stats([(13.0, 60.0)])
+    for rule in ("argmax", "background"):
+        m = _assign_mode_peaks([MODE_A, MODE_B], "power", stats, rule, [0, 0, 0.5])
+        assert m[0].tolist() == [False, False]
+
+
+def test_e6_argmax_tie_is_first_wins():
+    stats = _power_stats([(13.0, 5.0)])
+    ex = _assign_mode_peaks([MODE_A, MODE_A], "power", stats, "argmax", [0, 0, 0.5])
+    assert ex[0].tolist() == [True, False]
+
+
+def test_e7_phase_axis_falls_back_to_prob():
+    mode = [0.5, 13.0, 1.0, 0.0, 0.5, 0.0]
+    stats = pd.DataFrame(
+        {"PeakFrequency": [13.0, 13.0, 13.0], "SOphase": [0.0, 0.2, np.pi]}
+    )
+    fallback = _assign_mode_peaks([mode], "phase", stats, 0.95)
+    for rule in ("background", "argmax"):
+        m = _assign_mode_peaks([mode], "phase", stats, rule, [7, 7, 7])
+        assert m.tolist() == fallback.tolist()
+
+
+def test_e8_prob_form_matches_legacy_mask():
+    stats = _power_stats([(13.0, 5.0), (13.0, 15.0), (2.0, -4.0), (13.4, 28.0)])
+    m = _assign_mode_peaks([MODE_A, MODE_B], "power", stats, 0.95)
+    for col, mode in ((0, MODE_A), (1, MODE_B)):
+        legacy = _mode_peak_mask(np.array(mode), "power", stats, 0.95)
+        assert m[:, col].tolist() == legacy.tolist()
+
+
+def test_e9_sigma_form_is_an_exact_sigma_radius():
+    # "1 sigma": thr = 0.5 -> freq boundary at 13 + 1*sigma_f exactly, and
+    # Sigma(n) equals Prob(1 - exp(-n^2/2)) on the power axis.
+    stats = _power_stats([(14.0 - 1e-9, 5.0), (14.0 + 1e-3, 5.0)])
+    m = _assign_mode_peaks([MODE_A], "power", stats, "1 sigma")
+    assert m[:, 0].tolist() == [True, False]
+    via_p = _assign_mode_peaks([MODE_A], "power", stats, 1.0 - np.exp(-0.5))
+    assert m.tolist() == via_p.tolist()
+
+
+def test_e9_parser_forms_and_rejects():
+    a = parse_peak_assign(0.3)
+    assert (a["kind"], a["value"]) == ("p", 0.3)
+    assert parse_peak_assign("0.3 P")["thr"] == pytest.approx(-np.log(0.7))
+    assert parse_peak_assign(" 1.3 SIGMA ")["kind"] == "sigma"
+    assert parse_peak_assign("1.3 s")["thr"] == pytest.approx(0.5 * 1.3**2)
+    assert parse_peak_assign("Argmax")["label"] == "argmax"
+    assert parse_peak_assign("background")["label"] == "background"
+    for bad in ("1.5 p", 1.5, "0 sigma", "-1 s", "nonsense", "3 q"):
+        with pytest.raises(ValueError):
+            parse_peak_assign(bad)
+
+
+def test_peak_assign_default_and_alias_mapping():
+    assert ParamBasisOpts.power().peak_assign == "argmax"
+    with pytest.warns(DeprecationWarning):
+        opts = ParamBasisOpts.power(peak_assign_prob=0.8)
+    assert opts.peak_assign == "0.8 p"
+    # An explicit peak_assign wins over the deprecated alias.
+    with pytest.warns(DeprecationWarning):
+        opts = ParamBasisOpts.power(peak_assign="1.5 sigma", peak_assign_prob=0.8)
+    assert opts.peak_assign == "1.5 sigma"

@@ -19,6 +19,8 @@ divided — that parameter was always a true sigma.
 
 from __future__ import annotations
 
+import warnings
+
 from dataclasses import dataclass, field, replace
 from math import pi, sqrt
 from typing import Literal, Sequence
@@ -28,6 +30,60 @@ import numpy as np
 from pydynamo.soph.paramfit.basis import SQRT2
 
 Criterion = Literal["max", "mindr2", "minpctr2", "kneedle"]
+
+
+def parse_peak_assign(value):
+    """Parse the flexible ``peak_assign`` option value.
+
+    Accepts (trimmed, case-insensitive; mirrors the Rust settings parser and
+    MATLAB ``parse_peak_assign.m``): a probability ``0.3`` / ``"0.3"`` /
+    ``"0.3 p"`` (0 < p < 1), a sigma radius ``"1.3 s"`` / ``"1.3 sigma"``
+    (n > 0), ``"background"``, or ``"argmax"``.
+
+    Returns ``{"kind": "p"|"sigma"|"background"|"argmax", "value": float|None,
+    "thr": float|None, "label": str}`` where ``thr`` is the Q threshold of a
+    numeric contour (``-log(1-p)`` or ``n**2/2``; a peak is inside iff
+    Q <= thr) and ``label`` is the canonical form the CSV preamble records.
+    Raises ``ValueError`` on anything else.
+    """
+    import math
+
+    if isinstance(value, bool):
+        raise ValueError("peak_assign must be a number or string")
+    if isinstance(value, (int, float, np.integer, np.floating)):
+        num, unit = float(value), "p"
+    else:
+        if not isinstance(value, str):
+            raise ValueError("peak_assign must be a number or string")
+        text = value.strip().lower()
+        if text == "argmax":
+            return {"kind": "argmax", "value": None, "thr": None, "label": "argmax"}
+        if text == "background":
+            return {"kind": "background", "value": None, "thr": None,
+                    "label": "background"}
+        parts = text.split()
+        if len(parts) not in (1, 2):
+            raise ValueError(f"peak_assign: cannot parse {value!r}")
+        try:
+            num = float(parts[0])
+        except ValueError:
+            raise ValueError(
+                f"peak_assign: {value!r} is not a number, 'background', or 'argmax'"
+            ) from None
+        unit = parts[1] if len(parts) == 2 else "p"
+    if unit == "p":
+        if not (math.isfinite(num) and 0.0 < num < 1.0):
+            raise ValueError(f"peak_assign: probability must be in (0, 1), got {num}")
+        return {"kind": "p", "value": num, "thr": -math.log(1.0 - num),
+                "label": f"{num:g} p"}
+    if unit in ("s", "sigma"):
+        if not (math.isfinite(num) and num > 0.0):
+            raise ValueError(f"peak_assign: sigma radius must be > 0, got {num}")
+        return {"kind": "sigma", "value": num, "thr": 0.5 * num * num,
+                "label": f"{num:g} sigma"}
+    raise ValueError(
+        f"peak_assign: unknown unit {unit!r} in {value!r} (use 'p', 's', or 'sigma')"
+    )
 
 NAN = float("nan")
 
@@ -85,7 +141,11 @@ class ParamBasisOpts:
     max_iters: int = 0
 
     verbose: bool = False
-    peak_assign_prob: float = 0.95
+    # TF-peak -> mode assignment for the Pk* columns (see parse_peak_assign).
+    peak_assign: str | float = "argmax"
+    # DEPRECATED alias, kept one release: a probability mapped onto
+    # peak_assign as "<p> p" when peak_assign itself is untouched.
+    peak_assign_prob: float | None = None
 
     def __post_init__(self):
         feature_name = (
@@ -106,15 +166,29 @@ class ParamBasisOpts:
             if not (is_bool or is_binary_number):
                 raise ValueError(f"{name} must be a binary scalar")
 
-        prob = self.peak_assign_prob
-        is_numeric = (
-            isinstance(prob, (int, float, np.integer, np.floating))
-            and not isinstance(prob, (bool, np.bool_))
-        )
-        if not (
-            is_numeric and np.isfinite(prob) and 0.0 < float(prob) < 1.0
-        ):
-            raise ValueError("peak_assign_prob must be in (0, 1)")
+        if self.peak_assign_prob is not None:
+            prob = self.peak_assign_prob
+            is_numeric = (
+                isinstance(prob, (int, float, np.integer, np.floating))
+                and not isinstance(prob, (bool, np.bool_))
+            )
+            if not (
+                is_numeric and np.isfinite(prob) and 0.0 < float(prob) < 1.0
+            ):
+                raise ValueError("peak_assign_prob must be in (0, 1)")
+            if self.peak_assign == "argmax":  # untouched default: alias wins
+                object.__setattr__(
+                    self, "peak_assign", f"{float(prob):g} p"
+                )
+                detail = f"mapped to {self.peak_assign!r}"
+            else:
+                detail = f"ignored; peak_assign={self.peak_assign!r} wins"
+            warnings.warn(
+                f"peak_assign_prob is deprecated; use peak_assign ({detail})",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        parse_peak_assign(self.peak_assign)  # validates; raises ValueError
 
     @property
     def constrain_power_center(self):
