@@ -6,6 +6,8 @@ import numpy as np
 import pandas as pd
 from scipy.special import i0e
 
+from pydynamo.soph.paramfit.opts import parse_peak_assign
+
 
 PK_COLUMNS = (
     "PkCount",
@@ -129,13 +131,14 @@ def annotate_power_preferred_phase(
     return out
 
 
-def _mode_peak_mask(mode_params, kind, stats_table, prob):
-    if not 0.0 < prob < 1.0:
-        raise ValueError("prob must be in (0, 1)")
+def _mode_q(mode_params, kind, stats_table):
+    """Per-peak Q for one mode, plus the valid-input mask.
 
+    Q is the shared containment quadratic (see the Rust ``mode_quadratic``
+    and MATLAB ``get_mode_peaks``). A degenerate mode (non-positive width)
+    yields an all-False mask.
+    """
     _, freq_mean, freq_std, feature_mean, feature_std, theta = mode_params
-    if not (freq_std > 0.0 and feature_std > 0.0):
-        return np.zeros(len(stats_table), dtype=bool)
 
     frequency = stats_table["PeakFrequency"].to_numpy(dtype=float)
     feature_column = "SOphase" if kind == "phase" else "SOpower"
@@ -143,40 +146,122 @@ def _mode_peak_mask(mode_params, kind, stats_table, prob):
     delta_freq = frequency - freq_mean
 
     if kind == "phase":
-        kappa = 1.0 / feature_std**2
-        delta = (
-            feature - feature_mean + delta_freq * np.sin(theta) + np.pi
-        ) % (2.0 * np.pi) - np.pi
-        q = (
-            0.5 * (delta_freq / freq_std) ** 2
-            + kappa * (1.0 - np.cos(delta))
-        )
+        with np.errstate(divide="ignore", invalid="ignore"):
+            kappa = 1.0 / feature_std**2
+            delta = (
+                feature - feature_mean + delta_freq * np.sin(theta) + np.pi
+            ) % (2.0 * np.pi) - np.pi
+            q = (
+                0.5 * (delta_freq / freq_std) ** 2
+                + kappa * (1.0 - np.cos(delta))
+            )
     elif kind == "power":
         delta_feature = feature - feature_mean
         u = delta_freq * np.cos(theta) + delta_feature * np.sin(theta)
         v = -delta_freq * np.sin(theta) + delta_feature * np.cos(theta)
-        q = 0.5 * (
-            (u / freq_std) ** 2 + (v / feature_std) ** 2
-        )
+        with np.errstate(divide="ignore", invalid="ignore"):
+            q = 0.5 * (
+                (u / freq_std) ** 2 + (v / feature_std) ** 2
+            )
     else:
         raise ValueError("kind must be 'power' or 'phase'")
 
-    threshold = -np.log1p(-prob)
-    return (
-        np.isfinite(frequency)
-        & np.isfinite(feature)
-        & np.isfinite(q)
-        & (q <= threshold)
+    ok = np.isfinite(frequency) & np.isfinite(feature) & np.isfinite(q)
+    if not (freq_std > 0.0 and feature_std > 0.0):
+        ok = np.zeros(len(stats_table), dtype=bool)
+    return q, ok
+
+
+def _mode_peak_mask(mode_params, kind, stats_table, prob):
+    """Numeric-contour membership (the pre-argmax primitive)."""
+    if not 0.0 < prob < 1.0:
+        raise ValueError("prob must be in (0, 1)")
+    q, ok = _mode_q(mode_params, kind, stats_table)
+    return ok & (q <= -np.log1p(-prob))
+
+
+def _assign_mode_peaks(params6, kind, stats_table, assign, background=None):
+    """Member masks for every mode under one assignment rule.
+
+    Mirrors Rust ``dynamo_pipeline::mode_peaks::assign_members`` and MATLAB
+    ``assign_mode_peaks.m``:
+
+    * numeric (``p`` / ``sigma``): per-mode independent contour Q <= thr.
+    * ``background`` (power axis): member iff the mode's density at the
+      peak, ``amp*exp(-Q)``, is at least the background plane
+      ``xxx*P + yyy*F + zzz`` evaluated at the peak; non-finite background
+      fails closed. Non-exclusive.
+    * ``argmax`` (power axis, exclusive): the peak goes to the first mode
+      attaining the maximal density, and only when that density beats the
+      background there (ties with the background go to the background).
+    * The phase axis falls back to the ``0.95 p`` contour under the
+      density rules: phase Density is a row-normalized empirical height
+      while the stored phase background is pre-normalization.
+
+    Returns an ``(n_peaks, n_modes)`` boolean array.
+    """
+    assign = parse_peak_assign(assign)
+    if kind == "phase" and assign["kind"] in ("background", "argmax"):
+        assign = parse_peak_assign("0.95 p")
+
+    params6 = np.asarray(params6, dtype=float).reshape(-1, 6)
+    n_modes = params6.shape[0]
+    n_peaks = len(stats_table)
+    members = np.zeros((n_peaks, n_modes), dtype=bool)
+    if n_peaks == 0 or n_modes == 0:
+        return members
+
+    if assign["kind"] in ("p", "sigma"):
+        thr = assign["thr"]
+        for m in range(n_modes):
+            q, ok = _mode_q(params6[m], kind, stats_table)
+            members[:, m] = ok & (q <= thr)
+        return members
+
+    # Density rules (power axis only by this point).
+    background = np.asarray(
+        [np.nan] * 3 if background is None else background, dtype=float
     )
+    frequency = stats_table["PeakFrequency"].to_numpy(dtype=float)
+    feature = stats_table["SOpower"].to_numpy(dtype=float)
+    density = np.zeros((n_peaks, n_modes), dtype=float)
+    for m in range(n_modes):
+        q, ok = _mode_q(params6[m], kind, stats_table)
+        amp = params6[m, 0]
+        if np.isfinite(amp) and amp > 0.0:
+            density[ok, m] = amp * np.exp(-q[ok])
+    bg = background[0] * feature + background[1] * frequency + background[2]
+
+    if assign["kind"] == "background":
+        finite_bg = np.isfinite(bg)
+        for m in range(n_modes):
+            members[:, m] = (
+                (density[:, m] > 0.0) & finite_bg & (density[:, m] >= bg)
+            )
+        return members
+
+    # argmax: exclusive, first mode wins ties, background wins a tie.
+    best = np.argmax(density, axis=1)          # first maximizer (np.argmax)
+    best_d = density[np.arange(n_peaks), best]
+    assigned = (best_d > 0.0) & np.isfinite(bg) & (best_d > bg)
+    members[np.arange(n_peaks), best] = assigned
+    return members
 
 
 def annotate_modes_with_peak_stats(
     table: pd.DataFrame,
     kind: str,
     stats_table_soph,
-    prob: float,
+    assign="argmax",
+    background=None,
 ) -> pd.DataFrame:
-    """Fill PkCount and nine per-mode TF-peak summaries."""
+    """Fill PkCount and nine per-mode TF-peak summaries.
+
+    ``assign`` accepts anything ``parse_peak_assign`` does — a numeric value
+    keeps this function backward compatible with the old ``prob`` argument.
+    ``background`` is the fit's ``[xxx, yyy, zzz]``; only the density rules
+    consult it (and only on the power axis — see ``_assign_mode_peaks``).
+    """
     out = table.copy()
     n_modes = len(out)
     counts = np.zeros(n_modes, dtype=float)
@@ -189,11 +274,12 @@ def annotate_modes_with_peak_stats(
         and {"PeakFrequency", feature_column}.issubset(stats_table_soph.columns)
     )
     if have_stats:
+        params6 = out.iloc[:, :6].to_numpy(dtype=float)
+        member_matrix = _assign_mode_peaks(
+            params6, kind, stats_table_soph, assign, background
+        )
         for mode_idx in range(n_modes):
-            mode_params = out.iloc[mode_idx, :6].to_numpy(dtype=float)
-            members = _mode_peak_mask(
-                mode_params, kind, stats_table_soph, float(prob)
-            )
+            members = member_matrix[:, mode_idx]
             counts[mode_idx] = float(np.count_nonzero(members))
 
             for prop_idx, source_name in enumerate(_PK_SOURCE_COLUMNS):

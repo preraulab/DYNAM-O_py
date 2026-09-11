@@ -442,3 +442,25 @@ def test_writers_stamp_python_native_when_fallback_latched(tmp_path):
         assert prov.kernel_version == "python-native"
     finally:
         _kernel.FALLBACK_ACTIVE = saved
+
+
+def test_paramfit_csv_peak_assign_preamble(tmp_path, stamp):
+    # The line is emitted when a label is supplied and surfaces on read.
+    p = tmp_path / "pf.csv"
+    pio.write_paramfit_csv(
+        p, _power_fit(), "power", [0.0, 1.0, 2.0], [10.0, 11.0, 12.0],
+        "S1", stamp, peak_assign="argmax",
+    )
+    text = p.read_text()
+    assert "# peak_assign: argmax\n" in text
+    _, meta, _ = pio.read_paramfit_csv(p)
+    assert meta["peak_assign"] == "argmax"
+    # Omitted -> no line, and files without it still read (old-file shape).
+    q = tmp_path / "pf_old.csv"
+    pio.write_paramfit_csv(
+        q, _power_fit(), "power", [0.0, 1.0, 2.0], [10.0, 11.0, 12.0],
+        "S1", stamp,
+    )
+    assert "peak_assign" not in q.read_text()
+    _, meta, _ = pio.read_paramfit_csv(q)
+    assert "peak_assign" not in meta
