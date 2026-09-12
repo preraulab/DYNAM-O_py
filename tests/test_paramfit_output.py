@@ -378,6 +378,24 @@ def test_e9_sigma_form_is_an_exact_sigma_radius():
     assert m.tolist() == via_p.tolist()
 
 
+def test_e11_density_rules_respect_the_footprint_cap():
+    # Near-zero background: a peak at 3.5 sigma (Q = 6.125 > 4.5) must be
+    # excluded under both density rules; one at 2.9 sigma (Q = 4.205) stays.
+    stats = _power_stats([(13.0, 5.0 + 2.9 * 10.0), (13.0, 5.0 + 3.5 * 10.0)])
+    for rule in ("background", "argmax"):
+        m = _assign_mode_peaks([MODE_A], "power", stats, rule, [0, 0, 1e-6])
+        assert m[:, 0].tolist() == [True, False], rule
+
+
+def test_e12_capped_out_mode_does_not_block_argmax():
+    # A peak 4 sigma from strong mode A but at weak mode C's center: C wins
+    # the argmax - A's extrapolated tail neither claims nor blocks it.
+    mode_c = [0.01, 13.0, 1.0, 45.0, 10.0, 0.0]
+    stats = _power_stats([(13.0, 45.0)])
+    m = _assign_mode_peaks([MODE_A, mode_c], "power", stats, "argmax", [0, 0, 1e-6])
+    assert m[0].tolist() == [False, True]
+
+
 def test_e9_parser_forms_and_rejects():
     a = parse_peak_assign(0.3)
     assert (a["kind"], a["value"]) == ("p", 0.3)

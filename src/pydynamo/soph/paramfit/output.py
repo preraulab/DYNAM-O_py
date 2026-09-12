@@ -8,6 +8,11 @@ from scipy.special import i0e
 
 from pydynamo.soph.paramfit.opts import parse_peak_assign
 
+# 3-sigma footprint cap for the density rules (background/argmax); matches
+# Rust dynamo_pipeline::mode_peaks::DENSITY_ASSIGN_Q_CAP and the MATLAB
+# assign_mode_peaks.m Q_CAP. Numeric contours are not capped.
+_DENSITY_ASSIGN_Q_CAP = 4.5
+
 
 PK_COLUMNS = (
     "PkCount",
@@ -194,6 +199,11 @@ def _assign_mode_peaks(params6, kind, stats_table, assign, background=None):
     * ``argmax`` (power axis, exclusive): the peak goes to the first mode
       attaining the maximal density, and only when that density beats the
       background there (ties with the background go to the background).
+    * Both density rules operate within each mode's 3-sigma footprint
+      (``Q <= _DENSITY_ASSIGN_Q_CAP``): outside it a mode neither claims a
+      peak nor blocks another mode's argmax. Where the background plane
+      approaches zero, an uncapped comparison would admit arbitrarily far
+      tails. Numeric contours are NOT capped.
     * The phase axis falls back to the ``0.95 p`` contour under the
       density rules: phase Density is a row-normalized empirical height
       while the stored phase background is pre-normalization.
@@ -229,7 +239,8 @@ def _assign_mode_peaks(params6, kind, stats_table, assign, background=None):
         q, ok = _mode_q(params6[m], kind, stats_table)
         amp = params6[m, 0]
         if np.isfinite(amp) and amp > 0.0:
-            density[ok, m] = amp * np.exp(-q[ok])
+            in_cap = ok & (q <= _DENSITY_ASSIGN_Q_CAP)
+            density[in_cap, m] = amp * np.exp(-q[in_cap])
     bg = background[0] * feature + background[1] * frequency + background[2]
 
     if assign["kind"] == "background":
