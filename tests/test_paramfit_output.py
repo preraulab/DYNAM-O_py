@@ -308,7 +308,7 @@ def test_e1_background_rule_equals_pstar_contour():
     # Constant bg 0.5, amp 10 -> p* = 0.95: boundary at 13 + sqrt(2*ln 20).
     r = np.sqrt(2.0 * np.log(20.0))
     stats = _power_stats([(13.0 + r - 1e-9, 5.0), (13.0 + r + 1e-3, 5.0)])
-    m = _assign_mode_peaks([MODE_A], "power", stats, "background", [0, 0, 0.5])
+    m = _assign_mode_peaks([MODE_A], "power", stats, "background 3 s", [0, 0, 0.5])
     assert m[:, 0].tolist() == [True, False]
 
 
@@ -316,15 +316,15 @@ def test_e2_background_rule_adapts_to_amp():
     # amp 5 vs bg 0.5 -> p* = 0.9: power boundary at 25 + sqrt(2*ln 10)*10.
     b = 25.0 + np.sqrt(2.0 * np.log(10.0)) * 10.0
     stats = _power_stats([(13.0, b - 0.01), (13.0, b + 0.01)])
-    m = _assign_mode_peaks([MODE_B], "power", stats, "background", [0, 0, 0.5])
+    m = _assign_mode_peaks([MODE_B], "power", stats, "background 3 s", [0, 0, 0.5])
     assert m[:, 0].tolist() == [True, False]
 
 
 def test_e3_background_evaluated_at_the_peak():
     stats = _power_stats([(13.0, 25.0)])  # d_A ~ 1.3534 there
-    sloped = _assign_mode_peaks([MODE_A], "power", stats, "background", [0.1, 0, 0])
+    sloped = _assign_mode_peaks([MODE_A], "power", stats, "background 3 s", [0.1, 0, 0])
     assert not sloped[0, 0]
-    flat = _assign_mode_peaks([MODE_A], "power", stats, "background", [0, 0, 0.5])
+    flat = _assign_mode_peaks([MODE_A], "power", stats, "background 3 s", [0, 0, 0.5])
     assert flat[0, 0]
 
 
@@ -332,20 +332,20 @@ def test_e4_argmax_is_exclusive():
     stats = _power_stats([(13.0, 15.0)])
     both = _assign_mode_peaks([MODE_A, MODE_B], "power", stats, 0.95)
     assert both[0].tolist() == [True, True]
-    ex = _assign_mode_peaks([MODE_A, MODE_B], "power", stats, "argmax", [0, 0, 0.5])
+    ex = _assign_mode_peaks([MODE_A, MODE_B], "power", stats, "argmax 3 s", [0, 0, 0.5])
     assert ex[0].tolist() == [True, False]
 
 
 def test_e5_background_wins_leaves_unassigned():
     stats = _power_stats([(13.0, 60.0)])
-    for rule in ("argmax", "background"):
+    for rule in ("argmax 3 s", "background 3 s"):
         m = _assign_mode_peaks([MODE_A, MODE_B], "power", stats, rule, [0, 0, 0.5])
         assert m[0].tolist() == [False, False]
 
 
 def test_e6_argmax_tie_is_first_wins():
     stats = _power_stats([(13.0, 5.0)])
-    ex = _assign_mode_peaks([MODE_A, MODE_A], "power", stats, "argmax", [0, 0, 0.5])
+    ex = _assign_mode_peaks([MODE_A, MODE_A], "power", stats, "argmax 3 s", [0, 0, 0.5])
     assert ex[0].tolist() == [True, False]
 
 
@@ -355,7 +355,7 @@ def test_e7_phase_axis_falls_back_to_prob():
         {"PeakFrequency": [13.0, 13.0, 13.0], "SOphase": [0.0, 0.2, np.pi]}
     )
     fallback = _assign_mode_peaks([mode], "phase", stats, 0.95)
-    for rule in ("background", "argmax"):
+    for rule in ("background", "argmax", "argmax 3 s"):
         m = _assign_mode_peaks([mode], "phase", stats, rule, [7, 7, 7])
         assert m.tolist() == fallback.tolist()
 
@@ -382,9 +382,14 @@ def test_e11_density_rules_respect_the_footprint_cap():
     # Near-zero background: a peak at 3.5 sigma (Q = 6.125 > 4.5) must be
     # excluded under both density rules; one at 2.9 sigma (Q = 4.205) stays.
     stats = _power_stats([(13.0, 5.0 + 2.9 * 10.0), (13.0, 5.0 + 3.5 * 10.0)])
-    for rule in ("background", "argmax"):
+    for rule in ("background 3 s", "argmax 3 s"):
         m = _assign_mode_peaks([MODE_A], "power", stats, rule, [0, 0, 1e-6])
         assert m[:, 0].tolist() == [True, False], rule
+    # Bare density rules mean a 1.5-sigma footprint: 1.4 sigma in, 1.6 out.
+    stats2 = _power_stats([(13.0, 5.0 + 1.4 * 10.0), (13.0, 5.0 + 1.6 * 10.0)])
+    for rule in ("argmax", "background"):
+        m = _assign_mode_peaks([MODE_A], "power", stats2, rule, [0, 0, 1e-6])
+        assert m[:, 0].tolist() == [True, False], f"{rule} default footprint"
 
 
 def test_e12_capped_out_mode_does_not_block_argmax():
@@ -392,7 +397,7 @@ def test_e12_capped_out_mode_does_not_block_argmax():
     # the argmax - A's extrapolated tail neither claims nor blocks it.
     mode_c = [0.01, 13.0, 1.0, 45.0, 10.0, 0.0]
     stats = _power_stats([(13.0, 45.0)])
-    m = _assign_mode_peaks([MODE_A, mode_c], "power", stats, "argmax", [0, 0, 1e-6])
+    m = _assign_mode_peaks([MODE_A, mode_c], "power", stats, "argmax 3 s", [0, 0, 1e-6])
     assert m[0].tolist() == [False, True]
 
 
@@ -402,9 +407,12 @@ def test_e9_parser_forms_and_rejects():
     assert parse_peak_assign("0.3 P")["thr"] == pytest.approx(-np.log(0.7))
     assert parse_peak_assign(" 1.3 SIGMA ")["kind"] == "sigma"
     assert parse_peak_assign("1.3 s")["thr"] == pytest.approx(0.5 * 1.3**2)
-    assert parse_peak_assign("Argmax")["label"] == "argmax"
-    assert parse_peak_assign("background")["label"] == "background"
-    for bad in ("1.5 p", 1.5, "0 sigma", "-1 s", "nonsense", "3 q"):
+    assert parse_peak_assign("Argmax")["label"] == "argmax 1.5 sigma"
+    a = parse_peak_assign("argmax 2 s")
+    assert (a["kind"], a["footprint"], a["q_cap"]) == ("argmax", 2.0, 2.0)
+    assert parse_peak_assign("BACKGROUND 1.75 SIGMA")["footprint"] == 1.75
+    assert parse_peak_assign("background")["label"] == "background 1.5 sigma"
+    for bad in ("1.5 p", 1.5, "0 sigma", "-1 s", "nonsense", "3 q", "argmax 0 s", "argmax 2 p", "argmax 2"):
         with pytest.raises(ValueError):
             parse_peak_assign(bad)
 

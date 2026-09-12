@@ -32,19 +32,29 @@ from pydynamo.soph.paramfit.basis import SQRT2
 Criterion = Literal["max", "mindr2", "minpctr2", "kneedle"]
 
 
+# Footprint radius the density rules use when none is spelled out; matches
+# Rust DEFAULT_DENSITY_FOOTPRINT_SIGMA and the MATLAB parser default.
+DEFAULT_DENSITY_FOOTPRINT_SIGMA = 1.5
+
+
 def parse_peak_assign(value):
     """Parse the flexible ``peak_assign`` option value.
 
     Accepts (trimmed, case-insensitive; mirrors the Rust settings parser and
     MATLAB ``parse_peak_assign.m``): a probability ``0.3`` / ``"0.3"`` /
     ``"0.3 p"`` (0 < p < 1), a sigma radius ``"1.3 s"`` / ``"1.3 sigma"``
-    (n > 0), ``"background"``, or ``"argmax"``.
+    (n > 0), ``"background"``, or ``"argmax"``. The density rules take an
+    optional sigma footprint (``"argmax 2 s"``, ``"background 1.75 sigma"``);
+    bare forms mean a 1.5-sigma footprint.
 
     Returns ``{"kind": "p"|"sigma"|"background"|"argmax", "value": float|None,
-    "thr": float|None, "label": str}`` where ``thr`` is the Q threshold of a
-    numeric contour (``-log(1-p)`` or ``n**2/2``; a peak is inside iff
-    Q <= thr) and ``label`` is the canonical form the CSV preamble records.
-    Raises ``ValueError`` on anything else.
+    "thr": float|None, "footprint": float|None, "q_cap": float|None,
+    "label": str}`` where ``thr`` is the Q threshold of a numeric contour
+    (``-log(1-p)`` or ``n**2/2``; a peak is inside iff Q <= thr), ``q_cap``
+    is the density rules' footprint as a Q cap (``footprint**2/2``), and
+    ``label`` is the canonical form the CSV preamble records (density rules
+    always spell their footprint, e.g. ``"argmax 1.5 sigma"``). Raises
+    ``ValueError`` on anything else.
     """
     import math
 
@@ -56,12 +66,26 @@ def parse_peak_assign(value):
         if not isinstance(value, str):
             raise ValueError("peak_assign must be a number or string")
         text = value.strip().lower()
-        if text == "argmax":
-            return {"kind": "argmax", "value": None, "thr": None, "label": "argmax"}
-        if text == "background":
-            return {"kind": "background", "value": None, "thr": None,
-                    "label": "background"}
         parts = text.split()
+        if parts and parts[0] in ("argmax", "background"):
+            if len(parts) == 1:
+                fp = DEFAULT_DENSITY_FOOTPRINT_SIGMA
+            elif len(parts) == 3 and parts[2] in ("s", "sigma"):
+                try:
+                    fp = float(parts[1])
+                except ValueError:
+                    raise ValueError(
+                        f"peak_assign: footprint {parts[1]!r} is not a number"
+                    ) from None
+                if not (math.isfinite(fp) and fp > 0.0):
+                    raise ValueError(f"peak_assign: footprint must be > 0, got {fp}")
+            else:
+                raise ValueError(
+                    f"peak_assign: {value!r} - density-rule footprint must be '<n> s|sigma'"
+                )
+            return {"kind": parts[0], "value": None, "thr": None,
+                    "footprint": fp, "q_cap": 0.5 * fp * fp,
+                    "label": f"{parts[0]} {fp:g} sigma"}
         if len(parts) not in (1, 2):
             raise ValueError(f"peak_assign: cannot parse {value!r}")
         try:
@@ -75,12 +99,12 @@ def parse_peak_assign(value):
         if not (math.isfinite(num) and 0.0 < num < 1.0):
             raise ValueError(f"peak_assign: probability must be in (0, 1), got {num}")
         return {"kind": "p", "value": num, "thr": -math.log(1.0 - num),
-                "label": f"{num:g} p"}
+                "footprint": None, "q_cap": None, "label": f"{num:g} p"}
     if unit in ("s", "sigma"):
         if not (math.isfinite(num) and num > 0.0):
             raise ValueError(f"peak_assign: sigma radius must be > 0, got {num}")
         return {"kind": "sigma", "value": num, "thr": 0.5 * num * num,
-                "label": f"{num:g} sigma"}
+                "footprint": None, "q_cap": None, "label": f"{num:g} sigma"}
     raise ValueError(
         f"peak_assign: unknown unit {unit!r} in {value!r} (use 'p', 's', or 'sigma')"
     )
