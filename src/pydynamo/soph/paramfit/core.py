@@ -528,6 +528,7 @@ def fit_param_basis(
     stats_table_soph=None,
     phase_model_soph=None,
     phase_bins=None,
+    baseline=None,
 ) -> ParamFitResult:
     """Seed from a watershed over the histogram, then fit — fitParamBasis.m.
 
@@ -613,5 +614,6 @@ def fit_param_basis(
         # Lightweight result objects (some test paths) may lack the fitted
         # background; None fails the density rules closed.
         getattr(result, "background", None),
+        baseline,
     )
     return result

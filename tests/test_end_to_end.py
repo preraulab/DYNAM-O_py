@@ -71,13 +71,13 @@ def test_end_to_end_segment(example_data, tmp_path):
     assert tuple(out.SOPHs.SOpower_paramfit.params_table.columns) == (
         "Density", "FreqMean", "FreqStd", "SOpowerMean", "SOpowerStd",
         "Theta", "Volume", "PrefPhase", "Coupling", "PkCount", "PkFreq",
-        "PkDuration", "PkBandwidth", "PkHeight", "PkVolume", "PkArea",
+        "PkDuration", "PkBandwidth", "PkHeight", "PkPower", "PkVolume", "PkArea",
         "PkPeakiness", "PkSOpower", "PkSOphase",
     )
     assert tuple(out.SOPHs.SOphase_paramfit.params_table.columns) == (
         "Density", "FreqMean", "FreqStd", "SOphaseMean", "SOphaseStd",
         "Theta", "Volume", "PkCount", "PkFreq", "PkDuration", "PkBandwidth",
-        "PkHeight", "PkVolume", "PkArea", "PkPeakiness", "PkSOpower",
+        "PkHeight", "PkPower", "PkVolume", "PkArea", "PkPeakiness", "PkSOpower",
         "PkSOphase",
     )
     # Default assignment is argmax (exclusive): per-mode member counts must
