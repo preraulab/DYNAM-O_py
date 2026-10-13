@@ -286,6 +286,10 @@ def run_dynamo(
                                       baseline_range=baseline_range,
                                       baseline_ptile=base.baseline_ptile)
         spect1_norm = subtract_baseline(spect1, baseline1)
+        # The baseline the Pk machinery re-anchors heights against; pass 2
+        # overrides it when the two-pass path runs (matching which pass's
+        # spectrogram the final peak heights came from).
+        extract_baseline = baseline1
 
     if verbose: print("[dynamo] pass-1 extract...")
     with _timer(timings, "extract_pass1"):
@@ -323,6 +327,7 @@ def run_dynamo(
                                           baseline_exclude,
                                           baseline_range=baseline_range,
                                           baseline_ptile=base.baseline_ptile))
+            extract_baseline = baseline2
             spect2_norm = subtract_baseline(spect2, baseline2)
             if verbose: print("[dynamo] masking pass-2 spect with pass-1 regions...")
             spect2_masked = mask_spectrogram(spect2_norm, stimes2, labels1, stimes1)
@@ -498,6 +503,7 @@ def run_dynamo(
                     sophs.SOphase_mat, sophs.SOphase_bins, sophs.freq_bins,
                     opts=param_basis_phase_opts, kind="phase",
                     stats_table_soph=stats_table_soph,
+                    baseline=(extract_baseline, sfreqs),
                 )
             except Exception as exc:
                 warnings.warn(
@@ -510,6 +516,7 @@ def run_dynamo(
                     sophs.SOpower_mat, sophs.SOpower_bins, sophs.freq_bins,
                     opts=param_basis_power_opts, kind="power",
                     stats_table_soph=stats_table_soph,
+                    baseline=(extract_baseline, sfreqs),
                     phase_model_soph=(
                         sophs.SOphase_paramfit.model_soph
                         if sophs.SOphase_paramfit is not None else None
