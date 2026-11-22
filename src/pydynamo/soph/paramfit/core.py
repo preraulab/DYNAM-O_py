@@ -609,6 +609,9 @@ def fit_param_basis(
         result.params_table,
         opts.kind,
         stats_table_soph,
-        opts.peak_assign_prob,
+        opts.peak_assign,
+        # Lightweight result objects (some test paths) may lack the fitted
+        # background; None fails the density rules closed.
+        getattr(result, "background", None),
     )
     return result

@@ -86,6 +86,7 @@ def write_paramfit_csv(
     subject_id: str = "",
     stamp: Provenance | None = None,
     unit_row: float = math.nan,
+    peak_assign: str = "",
 ) -> None:
     """Write one axis's parametric fit as a format-3 paramfit CSV.
 
@@ -104,6 +105,12 @@ def write_paramfit_csv(
     unit_row : phase-axis row-normalization scale. pydynamo does not
           carry one, so the default emits ``NaN`` (as the Rust writer
           does for the power axis).
+    peak_assign : canonical label of the assignment rule the ``Pk*``
+          columns were computed under, as EFFECTIVELY used on this axis
+          (``parse_peak_assign(...)["label"]``; the phase axis records
+          the ``0.95 p`` fallback under the density rules). Empty
+          omits the line — readers ignore unknown ``#`` keys, so old
+          files and old readers are both unaffected.
     """
     if axis not in _BG_KEYS:
         raise ValueError(f"axis must be 'power' or 'phase', got {axis!r}")
@@ -145,6 +152,8 @@ def write_paramfit_csv(
             f.write(f"# subjectID: {subject_id}\n")
         f.write(f"# fit_type: {axis}\n")
         f.write(f"# n_modes: {n_modes}\n")
+        if peak_assign:
+            f.write(f"# peak_assign: {peak_assign}\n")
         f.write(f"# background.{bg0}: {_fmt17(background[0])}\n")
         f.write(f"# background.{bg1}: {_fmt17(background[1])}\n")
         f.write(f"# background.{bg2}: {_fmt17(background[2])}\n")
