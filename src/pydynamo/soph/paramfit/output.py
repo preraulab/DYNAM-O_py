@@ -15,6 +15,7 @@ PK_COLUMNS = (
     "PkDuration",
     "PkBandwidth",
     "PkHeight",
+    "PkPower",
     "PkVolume",
     "PkArea",
     "PkPeakiness",
@@ -51,6 +52,7 @@ _PK_SOURCE_COLUMNS = (
     "Duration",
     "Bandwidth",
     "Height",
+    "PowerDb",
     "Volume",
     "Area",
     "Peakiness",
@@ -255,19 +257,61 @@ def _assign_mode_peaks(params6, kind, stats_table, assign, background=None):
     return members
 
 
+def peak_power_db(peak_freq, height, baseline_values, baseline_freqs):
+    """Per-peak absolute prominence power in dB.
+
+    ``pow2db(Height × baseline(PeakFrequency))``: stats-table Height is a
+    LINEAR prominence over the recording's own percentile floor and is only
+    comparable within a recording (the floor carries the stable
+    subject-amplitude trait); multiplying the floor back in re-anchors it
+    to absolute power — the spectrogram-domain counterpart of per-spindle
+    bandpass-envelope amplitude. Clamped linear interpolation (``np.interp``
+    clamps at the axis ends), matching the Rust ``peak_power_db`` and the
+    MATLAB ``annotateModesWithPeakStats`` helper. Empty/mismatched baseline
+    → all-NaN (caches that predate baseline persistence).
+    """
+    freq = np.asarray(peak_freq, dtype=float)
+    h = np.asarray(height, dtype=float)
+    out = np.full(freq.shape, np.nan)
+    values = np.asarray(baseline_values, dtype=float).ravel()
+    bfreqs = np.asarray(baseline_freqs, dtype=float).ravel()
+    if values.size == 0 or values.size != bfreqs.size:
+        return out
+    good = np.isfinite(freq) & np.isfinite(h) & (h > 0)
+    base = np.interp(freq[good], bfreqs, values)
+    ok = np.isfinite(base) & (base > 0)
+    power = np.full(base.shape, np.nan)
+    power[ok] = 10.0 * np.log10(h[good][ok] * base[ok])
+    out[good] = power
+    return out
+
+
 def annotate_modes_with_peak_stats(
     table: pd.DataFrame,
     kind: str,
     stats_table_soph,
     assign="argmax",
     background=None,
+    baseline=None,
 ) -> pd.DataFrame:
-    """Fill PkCount and nine per-mode TF-peak summaries.
+    """Fill PkCount and ten per-mode TF-peak summaries.
+
+    Every Pk* aggregate is a MEDIAN over the mode's member peaks
+    (``PkSOphase`` is a circular mean, ``PkCount`` a count): the per-peak
+    size properties are heavy-tailed and a mean is dominated by a night's
+    few giant tail events — on the NSS two-night cohort that costs all of
+    the night-to-night subject reliability (mean PkVolume r ≈ 0.0 vs
+    median r ≈ 0.8). ``np.median`` averages the two middle values on even
+    counts, matching MATLAB and the Rust implementation exactly.
 
     ``assign`` accepts anything ``parse_peak_assign`` does — a numeric value
     keeps this function backward compatible with the old ``prob`` argument.
     ``background`` is the fit's ``[xxx, yyy, zzz]``; only the density rules
     consult it (and only on the power axis — see ``_assign_mode_peaks``).
+    ``baseline`` is the extraction's per-frequency percentile floor as a
+    ``(values, freqs)`` pair (linear power over the spectrogram frequency
+    axis); it feeds the PkPower column via ``peak_power_db`` and may be
+    None (PkPower is then NaN, column still present).
     """
     out = table.copy()
     n_modes = len(out)
@@ -281,6 +325,18 @@ def annotate_modes_with_peak_stats(
         and {"PeakFrequency", feature_column}.issubset(stats_table_soph.columns)
     )
     if have_stats:
+        # Local copy: PowerDb is derived here, never mutated into the
+        # caller's stats table.
+        if baseline is not None:
+            power_db = peak_power_db(
+                stats_table_soph["PeakFrequency"],
+                stats_table_soph.get("Height", np.nan),
+                baseline[0],
+                baseline[1],
+            )
+        else:
+            power_db = np.full(len(stats_table_soph), np.nan)
+        stats_table_soph = stats_table_soph.assign(PowerDb=power_db)
         params6 = out.iloc[:, :6].to_numpy(dtype=float)
         member_matrix = _assign_mode_peaks(
             params6, kind, stats_table_soph, assign, background
@@ -303,7 +359,7 @@ def annotate_modes_with_peak_stats(
                         np.mean(np.exp(1j * values))
                     )
                 else:
-                    summaries[mode_idx, prop_idx] = np.mean(values)
+                    summaries[mode_idx, prop_idx] = np.median(values)
 
     out["PkCount"] = counts
     for output_name, values in zip(PK_COLUMNS[1:], summaries.T):

@@ -17,7 +17,8 @@ scalars, background coefficients, and source bins into the same file
             Volume,SOpowerMean,<Pk*>
 
   where ``<Pk*>`` are the trailing per-mode TF-peak summary columns
-  (``PkCount`` + nine property means). Numeric cells are fixed-point
+  (``PkCount`` + ten property medians; ``PkSOphase`` a circular mean).
+  Numeric cells are fixed-point
   with 17 fractional digits (Rust ``{:.17}``); non-finite cells are
   ``NaN``, and ``PkCount`` is an integer.
 """

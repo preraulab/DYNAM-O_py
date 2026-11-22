@@ -34,6 +34,7 @@ POWER_COLUMNS = (
     "PkDuration",
     "PkBandwidth",
     "PkHeight",
+    "PkPower",
     "PkVolume",
     "PkArea",
     "PkPeakiness",
@@ -54,6 +55,7 @@ PHASE_COLUMNS = (
     "PkDuration",
     "PkBandwidth",
     "PkHeight",
+    "PkPower",
     "PkVolume",
     "PkArea",
     "PkPeakiness",
@@ -426,3 +428,60 @@ def test_peak_assign_default_and_alias_mapping():
     with pytest.warns(DeprecationWarning):
         opts = ParamBasisOpts.power(peak_assign="1.5 sigma", peak_assign_prob=0.8)
     assert opts.peak_assign == "1.5 sigma"
+
+def _stats_df(freq, sopower, height):
+    import numpy as _np
+    import pandas as _pd
+    n = len(freq)
+    z = _np.zeros(n)
+    return _pd.DataFrame({
+        "PeakFrequency": freq,
+        "Duration": z,
+        "Bandwidth": z,
+        "Height": height,
+        "Volume": z,
+        "Area": z,
+        "Peakiness": z,
+        "SOpower": sopower,
+        "SOphase": z,
+    })
+
+
+def _wide_mode_table(fmean):
+    import pandas as _pd
+    return _pd.DataFrame(
+        [[10.0, fmean, 20.0, 0.0, 50.0, 0.0]],
+        columns=["Density", "FreqMean", "FreqStd", "SOpowerMean",
+                 "SOpowerStd", "Theta"],
+    )
+
+
+def test_median_resists_a_tail_event():
+    """Mirrors Rust medians_resist_a_tail_event / MATLAB test_mode_peak_medians."""
+    table = _wide_mode_table(13.0)
+    stats = _stats_df([13.0, 13.1, 13.2], [5.0, 5.5, 6.0], [10.0, 20.0, 999.0])
+    out = annotate_modes_with_peak_stats(table, "power", stats, 0.99)
+    assert out.loc[0, "PkCount"] == 3.0
+    assert out.loc[0, "PkHeight"] == pytest.approx(20.0)
+    assert out.loc[0, "PkSOpower"] == pytest.approx(5.5)
+
+
+def test_pkpower_reanchors_to_the_baseline():
+    """Shared analytic fixture: baseline [0.1, 0.4] on [10, 20] Hz."""
+    table = _wide_mode_table(15.0)
+    bl = ([0.1, 0.4], [10.0, 20.0])
+    # Single member at 15 Hz, Height 40 -> pow2db(40 x 0.25) = 10 dB.
+    out1 = annotate_modes_with_peak_stats(
+        table, "power", _stats_df([15.0], [0.0], [40.0]), "0.99 p", None, bl
+    )
+    assert out1.loc[0, "PkPower"] == pytest.approx(10.0)
+    # Three members with endpoint clamping -> median pow2db(10 x 0.4).
+    stats = _stats_df([15.0, 10.0, 25.0], [0.0, 0.0, 0.0], [40.0, 10.0, 10.0])
+    out = annotate_modes_with_peak_stats(table, "power", stats, "0.99 p", None, bl)
+    assert out.loc[0, "PkPower"] == pytest.approx(10.0 * np.log10(4.0))
+    # Without a baseline the column is present and NaN, and the caller's
+    # stats table is not mutated.
+    out2 = annotate_modes_with_peak_stats(table, "power", stats, "0.99 p")
+    assert "PkPower" in out2.columns
+    assert np.isnan(out2["PkPower"]).all()
+    assert "PowerDb" not in stats.columns
