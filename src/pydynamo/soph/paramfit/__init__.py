@@ -6,12 +6,14 @@ the same code the DYNAM-O desktop app runs.
 """
 
 from pydynamo.soph.paramfit.core import (
-    PK_COLUMNS, ParamFitResult, fit_paramfits, rebuild_phase_model,
+    PK_COLUMNS, ParamFitResult, fit_paramfits, paramfit_result_from_kernel,
+    rebuild_phase_model,
 )
 
 __all__ = [
     "PK_COLUMNS",
     "ParamFitResult",
     "fit_paramfits",
+    "paramfit_result_from_kernel",
     "rebuild_phase_model",
 ]

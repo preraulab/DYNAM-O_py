@@ -9,9 +9,8 @@ Two-page f32 grayscale TIFF mirroring
   ``(n_fit_feature, n_fit_freq)`` (a bare page; the metadata lives on
   page 1).
 
-`pydynamo.soph.splinefit.fit_spline_basis` already returns the
-analysis-window submatrix, so no re-slicing against the full SOPH grid
-is needed here. NaN pixels are preserved (a fully-NaN splinefit means
+`SplineFitResult.splinefit` is already the analysis-window submatrix,
+so no re-slicing against the full SOPH grid is needed here. NaN pixels are preserved (a fully-NaN splinefit means
 "no finite SOPH cells"; f32 encodes NaN faithfully).
 """
 
@@ -82,6 +81,7 @@ def write_splinefit_tiff(
         "writer": stamp.writer,
         "writer_version": stamp.writer_version,
         "kernel_version": stamp.kernel_version,
+        "semantics": stamp.semantics,
     }
 
     path = Path(path)

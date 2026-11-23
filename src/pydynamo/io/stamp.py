@@ -9,8 +9,9 @@ Every artifact records the same four keys in every carrier:
   ``<semver>+<sha12>[.dirty]`` (a plain version string is the best
   available when no git sha is known) or the fail-soft ``unknown``.
 * ``kernel_version`` — the ``dynamo_rs`` build that computed the
-  numbers, or the literal ``python-native`` when a pure-Python fallback
-  computed them (see :mod:`pydynamo._kernel`).
+  numbers.
+* ``semantics`` — the kernel's computation-semantics version; the same
+  number across builds means comparable numbers.
 
 Carriers: CSVs use leading ``# key: value`` preamble lines, TIFFs use
 keys in the ImageDescription JSON, HDF5 uses top-level scalar datasets,
@@ -32,7 +33,7 @@ WRITER = "pydynamo"
 #: paramfit spelling of ``format``; ``code_version`` the legacy spelling
 #: of ``writer_version`` (§8.2 legacy formats).
 _STAMP_KEYS = ("format", "version", "writer", "writer_version",
-               "code_version", "kernel_version")
+               "code_version", "kernel_version", "semantics")
 
 
 @dataclass
@@ -47,6 +48,7 @@ class Provenance:
     writer: str | None = None
     writer_version: str | None = None
     kernel_version: str | None = None
+    semantics: int | None = None
 
 
 def writer_version() -> str:
@@ -62,24 +64,14 @@ def writer_version() -> str:
 
 
 def kernel_version() -> str:
-    """Identity of the code that computed the numbers.
+    """The ``dynamo_rs`` build that computes the numbers
+    (``<semver>+<sha12>[.dirty]``)."""
+    return str(_kernel.rs().build_info()["build_info"])
 
-    * ``python-native`` when any pure-Python fallback has run in this
-      process (:data:`pydynamo._kernel.FALLBACK_ACTIVE`);
-    * otherwise the ``dynamo_rs`` build string
-      (``<semver>+<sha12>[.dirty]``);
-    * ``unknown`` when ``dynamo_rs`` is absent.
-    """
-    if _kernel.FALLBACK_ACTIVE:
-        return "python-native"
-    try:
-        import dynamo_rs
-    except ImportError:
-        return "unknown"
-    try:
-        return str(dynamo_rs.build_info()["build_info"])
-    except Exception:
-        return "unknown"
+
+def semantics_version() -> int:
+    """The kernel's computation-semantics version."""
+    return int(_kernel.rs().SEMANTICS_VERSION)
 
 
 def current_stamp(format: int | None = None) -> Provenance:
@@ -93,6 +85,7 @@ def current_stamp(format: int | None = None) -> Provenance:
         writer=WRITER,
         writer_version=writer_version(),
         kernel_version=kernel_version(),
+        semantics=semantics_version(),
     )
 
 
@@ -137,6 +130,11 @@ def parse_preamble(lines: Iterable[str]) -> tuple[Provenance, dict[str, str]]:
                 stamp.writer_version = value
         elif key == "kernel_version":
             stamp.kernel_version = value
+        elif key == "semantics":
+            try:
+                stamp.semantics = int(value)
+            except ValueError:
+                pass
         else:
             extras[key] = value
     return stamp, extras

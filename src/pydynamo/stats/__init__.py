@@ -19,7 +19,7 @@ These delegate to ``dynamo_rs.stats`` — the same Rust the desktop app and
 CLI link — so the three front ends cannot drift from one another, and
 MATLAB parity has to be established once rather than three times.
 
-There is deliberately **no pure-Python fallback**, unlike the rest of
+There is deliberately **no pure-Python fallback**, as for the rest of
 pydynamo. A fallback would reintroduce the second implementation this
 design exists to remove, and one that disagreed only in the tail of a
 distribution would be worse than an import error. Without the kernel

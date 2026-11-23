@@ -7,7 +7,7 @@ other. MATLAB remains canonical: the Rust port is checked against
 MATLAB-generated fixtures, and this layer is checked against the same
 ones (``tests/test_stats_parity.py``).
 
-Unlike the rest of pydynamo there is **no pure-Python fallback**. A
+As for the rest of pydynamo there is **no pure-Python fallback**. A
 fallback here would be exactly the second implementation this design
 exists to avoid — and a statistics fallback that silently disagreed in
 the tail would be far worse than an import error. Without the kernel

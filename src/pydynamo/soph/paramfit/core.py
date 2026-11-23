@@ -25,11 +25,6 @@ import pandas as pd
 
 from pydynamo import _kernel
 
-try:
-    import dynamo_rs as _rs
-except ImportError:  # pragma: no cover - exercised only without the kernel
-    _rs = None
-
 
 # The member-peak columns at the end of every paramfit table, in CSV order.
 PK_COLUMNS = (
@@ -71,15 +66,6 @@ class ParamFitResult:
     params_table: pd.DataFrame = field(default_factory=pd.DataFrame)
 
 
-def _require_kernel():
-    if _rs is None or not hasattr(_rs, "fit_paramfits"):
-        _kernel.record_fallback("fit_paramfits")
-        raise ImportError(
-            "dynamo_rs with fit_paramfits is required for parametric basis "
-            "fitting; rebuild it from DYNAM-O_rs (see README)."
-        )
-
-
 def _peak_dict(stats_table, peak_in_hist):
     """The kernel's `peaks` argument from a stats table, or None."""
     if stats_table is None or len(stats_table) == 0:
@@ -95,7 +81,7 @@ def _peak_dict(stats_table, peak_in_hist):
     return peaks
 
 
-def _axis_result(axis_out, n_freq, n_feature):
+def paramfit_result_from_kernel(axis_out, n_freq, n_feature):
     """A ParamFitResult from one axis of the kernel's output, or None when
     the kernel declined the fit (its reason is raised as a warning by the
     caller)."""
@@ -149,7 +135,6 @@ def fit_paramfits(
     declined that fit on degenerate input; ``skipped`` maps the declined
     axis to the kernel's reason.
     """
-    _require_kernel()
     freq_bins = np.ascontiguousarray(np.asarray(freq_bins, dtype=float).ravel())
     sopower_bins = np.ascontiguousarray(np.asarray(sopower_bins, dtype=float).ravel())
     sophase_bins = np.ascontiguousarray(np.asarray(sophase_bins, dtype=float).ravel())
@@ -163,7 +148,7 @@ def fit_paramfits(
         baseline_freqs = np.ascontiguousarray(np.asarray(baseline[1], dtype=float).ravel())
 
     opts_json = json.dumps(settings) if settings is not None else None
-    out = _rs.fit_paramfits(
+    out = _kernel.rs().fit_paramfits(
         sopower_hist, sophase_hist, sopower_bins, sophase_bins, freq_bins,
         opts_json=opts_json,
         peaks=_peak_dict(stats_table, peak_in_hist),
@@ -174,8 +159,8 @@ def fit_paramfits(
     for axis in ("power", "phase"):
         if out[axis]["skipped"] is not None:
             skipped[axis] = out[axis]["skipped"]
-    power = _axis_result(out["power"], freq_bins.size, sopower_bins.size)
-    phase = _axis_result(out["phase"], freq_bins.size, sophase_bins.size)
+    power = paramfit_result_from_kernel(out["power"], freq_bins.size, sopower_bins.size)
+    phase = paramfit_result_from_kernel(out["phase"], freq_bins.size, sophase_bins.size)
     return power, phase, skipped
 
 
@@ -186,8 +171,7 @@ def rebuild_phase_model(modes, background, phase_bins, freq_bins):
     (n_freq, n_phase), matching the fit's own model. The kernel does the
     work (`fits::rebuild_phase_model`).
     """
-    _require_kernel()
-    return _rs.rebuild_phase_model(
+    return _kernel.rs().rebuild_phase_model(
         np.ascontiguousarray(np.asarray(modes, dtype=float).reshape(-1, 6)),
         np.ascontiguousarray(np.asarray(background, dtype=float).ravel()),
         np.ascontiguousarray(np.asarray(phase_bins, dtype=float).ravel()),

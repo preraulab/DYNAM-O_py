@@ -6,8 +6,8 @@ Implements the on-disk contract in the DYNAM-O_DesktopApp repo's
 results root that ``dynamo-cli``, the desktop app, and the MATLAB
 toolbox all read, and vice versa.
 
-This package is purely I/O: the numeric core (`pydynamo.pipeline` and
-below) stays in-memory-only and never writes files itself.
+This package is purely I/O: `pydynamo.run_dynamo` stays in-memory-only
+and never writes files itself.
 
 Modules:
 
@@ -19,6 +19,7 @@ Modules:
 * :mod:`~pydynamo.io.splinefit_tiff` — spline-basis fit TIFF (§2.5, format 2).
 * :mod:`~pydynamo.io.aux_h5` — auxiliary-data HDF5 (§2.3, format 2).
 * :mod:`~pydynamo.io.runs_jsonl` — ``_runs/*.jsonl`` run index (§4.2).
+* :mod:`~pydynamo.io.run_tree` — :func:`write_run`, one run's whole file set.
 """
 
 from pydynamo.io.stamp import (
@@ -26,6 +27,7 @@ from pydynamo.io.stamp import (
     current_stamp,
     kernel_version,
     parse_preamble,
+    semantics_version,
     writer_version,
 )
 from pydynamo.io.tree import (
@@ -39,7 +41,9 @@ from pydynamo.io.tree import (
     stats_csv_path,
 )
 from pydynamo.io.stats import read_stats_csv, write_stats_csv
-from pydynamo.io.paramfit import read_paramfit_csv, write_paramfit_csv
+from pydynamo.io.paramfit import (
+    read_paramfit_csv, write_paramfit_csv, write_paramfit_skipped_csv,
+)
 from pydynamo.io.soph_tiff import read_soph_tiff, write_soph_tiff
 from pydynamo.io.splinefit_tiff import (
     read_splinefit_tiff,
@@ -49,6 +53,7 @@ from pydynamo.io.aux_h5 import (
     read_auxiliary_data_h5,
     write_auxiliary_data_h5,
 )
+from pydynamo.io.run_tree import write_run
 from pydynamo.io.runs_jsonl import (
     append_run_header,
     append_run_item,
@@ -60,7 +65,9 @@ __all__ = [
     "current_stamp",
     "kernel_version",
     "parse_preamble",
+    "semantics_version",
     "writer_version",
+    "write_run",
     "fix_filename",
     "channel_dir",
     "stats_csv_path",
@@ -71,6 +78,7 @@ __all__ = [
     "runs_dir",
     "write_stats_csv",
     "write_paramfit_csv",
+    "write_paramfit_skipped_csv",
     "write_soph_tiff",
     "write_splinefit_tiff",
     "write_auxiliary_data_h5",

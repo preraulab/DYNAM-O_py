@@ -1,83 +1,29 @@
-"""Spline-basis fitting for SO-power and SO-phase histograms.
+"""Spline-basis fits of a recording's SOPHs: a wrapper over the kernel.
 
-This is the Python wrapper around ``dynamo_rs.fit_tensor_product_spline``.
-It mirrors MATLAB's ``spline_basis.m`` domain filtering and knot construction;
-the least-squares spline itself is evaluated by the shared Rust kernel.
+The fits run in the shared Rust kernel, the code the DYNAM-O app runs:
+inside :func:`pydynamo.run_dynamo`, or on SOPHs you already have through
+:func:`fit_splinefits` (``dynamo_rs.fit_splinefits``). Options are the
+``splinefit`` keys of a DYNAM-O settings section.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
-from math import pi
-from typing import Literal
+import json
+from dataclasses import dataclass
 
 import numpy as np
 from scipy.interpolate import BSpline
 
-try:
-    import dynamo_rs as _rs
-except ImportError:  # pragma: no cover - exercised only without the extension
-    _rs = None
-
-
-@dataclass(frozen=True)
-class SplineBasisOpts:
-    """Options that affect one spline-basis fit."""
-
-    kind: Literal["power", "phase"] = "power"
-    feature_limits: tuple[float, float] = (-2.0, 20.0)
-    freq_limits: tuple[float, float] = (2.0, 18.0)
-    num_knots_x: int = 5
-    num_knots_y: int = 18
-
-    def __post_init__(self):
-        if self.kind not in ("power", "phase"):
-            raise ValueError("kind must be 'power' or 'phase'")
-
-        for name in ("feature_limits", "freq_limits"):
-            values = np.asarray(getattr(self, name), dtype=float).ravel()
-            if (
-                values.size != 2
-                or not np.isfinite(values).all()
-                or values[0] >= values[1]
-            ):
-                raise ValueError(f"{name} must contain two increasing finite values")
-            object.__setattr__(self, name, (float(values[0]), float(values[1])))
-
-        for name in ("num_knots_x", "num_knots_y"):
-            value = getattr(self, name)
-            if (
-                isinstance(value, (bool, np.bool_))
-                or not isinstance(value, (int, np.integer))
-                or value <= 0
-            ):
-                raise ValueError(f"{name} must be a positive integer")
-            object.__setattr__(self, name, int(value))
-
-    @staticmethod
-    def power(**overrides) -> "SplineBasisOpts":
-        """MATLAB ``spline_basis_opts('power')`` defaults."""
-        return replace(SplineBasisOpts(), **overrides)
-
-    @staticmethod
-    def phase(**overrides) -> "SplineBasisOpts":
-        """MATLAB ``spline_basis_opts('phase')`` defaults."""
-        base = SplineBasisOpts(
-            kind="phase",
-            feature_limits=(-pi, pi),
-            freq_limits=(2.0, 18.0),
-            num_knots_x=5,
-            num_knots_y=9,
-        )
-        return replace(base, **overrides)
+from pydynamo import _kernel
 
 
 @dataclass
 class SplineObject:
     """Portable numerical equivalent of MATLAB's tensor spline object.
 
-    ``coefs`` uses the emitted ``(frequency_basis, feature_basis)`` layout.
-    Calling the object evaluates the fitted surface on feature/frequency axes.
+    ``coefs`` uses the emitted ``(frequency_basis, feature_basis)`` layout,
+    ``knots_x`` / ``knots_y`` are the augmented knot vectors. Calling the
+    object evaluates the fitted surface on feature/frequency axes.
     """
 
     coefs: np.ndarray
@@ -92,8 +38,8 @@ class SplineObject:
         return (self.coefs.shape[1], self.coefs.shape[0])
 
     def __call__(self, feature_bins, freq_bins) -> np.ndarray:
-        feature_bins = _as_axis(feature_bins, "feature_bins")
-        freq_bins = _as_axis(freq_bins, "freq_bins")
+        feature_bins = np.asarray(feature_bins, dtype=float).ravel()
+        freq_bins = np.asarray(freq_bins, dtype=float).ravel()
         feature_basis = BSpline.design_matrix(
             feature_bins, self.knots_x, self.order[0] - 1,
         ).toarray()
@@ -105,166 +51,89 @@ class SplineObject:
 
 @dataclass
 class SplineFitResult:
-    """One axis's spline fit and the information needed to reconstruct it."""
+    """One axis's spline fit, as the kernel returns it.
+
+    ``splinefit`` is the fitted surface on the fit window,
+    ``(n_fit_feature, n_fit_freq)``; ``fit_SOfeature_bins`` /
+    ``fit_freq_bins`` are that window's bin centers. ``coefs`` is
+    ``(frequency_basis, feature_basis)``.
+    """
 
     splinefit: np.ndarray
     coefs: np.ndarray
     spline_obj: SplineObject
-    knots_x: np.ndarray
-    knots_y: np.ndarray
-    fit_SOfeature_bins: np.ndarray
-    fit_freq_bins: np.ndarray
     knots_x_aug: np.ndarray
     knots_y_aug: np.ndarray
+    fit_SOfeature_bins: np.ndarray
+    fit_freq_bins: np.ndarray
 
 
-def _as_axis(values, name: str) -> np.ndarray:
-    raw = np.asarray(values, dtype=float)
-    if raw.ndim == 0 or raw.ndim > 2 or (raw.ndim == 2 and 1 not in raw.shape):
-        raise ValueError(f"{name} must be a vector")
-    axis = raw.ravel()
-    if (
-        axis.size == 0
-        or not np.isfinite(axis).all()
-        or np.any(np.diff(axis) <= 0)
-    ):
-        raise ValueError(f"{name} must be a finite increasing vector")
-    return axis
+def _nearest_indices(grid: np.ndarray, values: np.ndarray) -> np.ndarray:
+    """For each value, the index of the nearest grid point."""
+    indices = []
+    for value in values:
+        indices.append(int(np.argmin(np.abs(grid - value))))
+    return np.asarray(indices, dtype=int)
 
 
-def _orient_soph(
-    soph: np.ndarray,
-    feature_bins: np.ndarray,
-    freq_bins: np.ndarray,
-) -> np.ndarray:
-    """Return SOPH as ``(n_freq, n_feature)``.
+def spline_result_from_kernel(fit: dict | None, so_bins, freq_bins) -> SplineFitResult | None:
+    """A `SplineFitResult` from one axis of the kernel's splinefit output.
 
-    MATLAB-layout ``(n_feature, n_freq)`` is checked first, matching
-    ``spline_basis.m`` when the two dimensions happen to be equal.
+    The kernel returns the fitted surface on the whole SOPH grid
+    (``so_bins`` x ``freq_bins``, zero outside the fit window); the result
+    keeps the fit-window part, as the DYNAM-O app's splinefit TIFF and
+    MATLAB's ``spline_basis`` do.
     """
-    if soph.shape == (feature_bins.size, freq_bins.size):
-        return soph.T
-    if soph.shape == (freq_bins.size, feature_bins.size):
-        return soph
-    raise ValueError(
-        f"incompatible SOPH dimensions: soph {soph.shape}, "
-        f"feature_bins {feature_bins.size}, freq_bins {freq_bins.size}"
-    )
-
-
-def fit_spline_basis(
-    soph,
-    feature_bins,
-    freq_bins,
-    opts: SplineBasisOpts | None = None,
-    kind: Literal["power", "phase"] = "power",
-) -> SplineFitResult:
-    """Fit one SOPH with MATLAB-compatible filtering and cubic B-splines.
-
-    The returned ``splinefit`` has shape ``(n_fit_feature, n_fit_freq)`` and
-    ``coefs`` has shape ``(num_knots_y + 2, num_knots_x + 2)``, matching
-    MATLAB's emitted arrays.
-    """
-    if opts is None:
-        if kind not in ("power", "phase"):
-            raise ValueError("kind must be 'power' or 'phase'")
-        opts = (
-            SplineBasisOpts.power()
-            if kind == "power"
-            else SplineBasisOpts.phase()
-        )
-    if _rs is None or not hasattr(_rs, "fit_tensor_product_spline"):
-        raise ImportError(
-            "dynamo_rs with fit_tensor_product_spline is required for spline "
-            "basis fitting; rebuild the coordinated native extensions with the "
-            "DYNAM-O_toolbox controlled bootstrap (`./bootstrap.sh --yes` or "
-            "`bootstrap.ps1 -Yes`)"
-        )
-
-    feature_bins = _as_axis(feature_bins, "feature_bins")
-    freq_bins = _as_axis(freq_bins, "freq_bins")
-    soph = np.asarray(soph, dtype=float)
-    if soph.ndim != 2 or soph.size == 0:
-        raise ValueError("soph must be a nonempty matrix")
-    if np.any(soph < 0):
-        raise ValueError("soph must be nonnegative")
-    soph = _orient_soph(soph, feature_bins, freq_bins)
-
-    valid_mat = np.isfinite(soph)
-    invalid_freq = np.all(~valid_mat, axis=1)
-    valid_mat[invalid_freq, :] = True
-    valid_feature = (
-        (feature_bins >= opts.feature_limits[0])
-        & (feature_bins <= opts.feature_limits[1])
-        & np.all(valid_mat, axis=0)
-    )
-    valid_freq = (
-        (freq_bins >= opts.freq_limits[0])
-        & (freq_bins <= opts.freq_limits[1])
-        & ~invalid_freq
-    )
-    if not valid_feature.any() or not valid_freq.any():
-        raise ValueError("no finite SOPH bins remain inside the fit limits")
-
-    fit_feature_bins = feature_bins[valid_feature]
-    fit_freq_bins = freq_bins[valid_freq]
-    fit_soph = soph[np.ix_(valid_freq, valid_feature)]
-
-    knots_x = np.concatenate((
-        [fit_feature_bins[0] - 0.1],
-        np.linspace(
-            fit_feature_bins[0],
-            fit_feature_bins[-1],
-            opts.num_knots_x,
-        ),
-        [fit_feature_bins[-1] + 0.1],
-    ))
-    knots_y = np.concatenate((
-        [fit_freq_bins[0] - 0.1],
-        np.linspace(
-            fit_freq_bins[0],
-            fit_freq_bins[-1],
-            opts.num_knots_y,
-        ),
-        [fit_freq_bins[-1] + 0.1],
-    ))
-
-    raw = _rs.fit_tensor_product_spline(
-        np.ascontiguousarray(fit_soph.T),
-        np.ascontiguousarray(fit_feature_bins),
-        np.ascontiguousarray(fit_freq_bins),
-        np.ascontiguousarray(knots_x),
-        np.ascontiguousarray(knots_y),
-        4,
-        3,
-    )
-
-    splinefit = np.ascontiguousarray(raw["splinefit"], dtype=float)
-    coefs = np.ascontiguousarray(raw["coefs"], dtype=float)
-    knots_x_aug = np.ascontiguousarray(raw["knots_x_aug"], dtype=float)
-    knots_y_aug = np.ascontiguousarray(raw["knots_y_aug"], dtype=float)
-    spline_obj = SplineObject(
-        coefs=coefs,
-        knots_x=knots_x_aug,
-        knots_y=knots_y_aug,
-    )
-
+    if fit is None:
+        return None
+    coefs = np.asarray(fit["coefs"], dtype=float)
+    knots_x = np.asarray(fit["knots_x_aug"], dtype=float)
+    knots_y = np.asarray(fit["knots_y_aug"], dtype=float)
+    fit_so_bins = np.asarray(fit["fit_so_bins"], dtype=float)
+    fit_freq_bins = np.asarray(fit["fit_freq_bins"], dtype=float)
+    full_surface = np.asarray(fit["splinefit"], dtype=float)
+    so_idx = _nearest_indices(np.asarray(so_bins, dtype=float).ravel(), fit_so_bins)
+    freq_idx = _nearest_indices(np.asarray(freq_bins, dtype=float).ravel(), fit_freq_bins)
+    window_surface = full_surface[np.ix_(so_idx, freq_idx)]
     return SplineFitResult(
-        splinefit=splinefit,
+        splinefit=window_surface,
         coefs=coefs,
-        spline_obj=spline_obj,
-        knots_x=knots_x,
-        knots_y=knots_y,
-        fit_SOfeature_bins=fit_feature_bins,
+        spline_obj=SplineObject(coefs=coefs, knots_x=knots_x, knots_y=knots_y),
+        knots_x_aug=knots_x,
+        knots_y_aug=knots_y,
+        fit_SOfeature_bins=fit_so_bins,
         fit_freq_bins=fit_freq_bins,
-        knots_x_aug=knots_x_aug,
-        knots_y_aug=knots_y_aug,
     )
+
+
+def fit_splinefits(
+    sopower_mat,
+    sophase_mat,
+    sopower_bins,
+    sophase_bins,
+    freq_bins,
+    settings: dict | None = None,
+):
+    """Fit both SOPHs (``(n_feature, n_freq)``). Returns
+    ``(power, phase, skipped)``: `SplineFitResult` or None per axis, and
+    the kernel's reason for each declined axis. ``settings`` is a DYNAM-O
+    settings section (dict) or None for the defaults."""
+    def vector(values):
+        return np.ascontiguousarray(np.asarray(values, dtype=float).ravel())
+
+    out = _kernel.rs().fit_splinefits(
+        np.ascontiguousarray(np.asarray(sopower_mat, dtype=float)),
+        np.ascontiguousarray(np.asarray(sophase_mat, dtype=float)),
+        vector(sopower_bins),
+        vector(sophase_bins),
+        vector(freq_bins),
+        None if settings is None else json.dumps(settings),
+    )
+    power = spline_result_from_kernel(out["power"], sopower_bins, freq_bins)
+    phase = spline_result_from_kernel(out["phase"], sophase_bins, freq_bins)
+    return power, phase, dict(out["skipped"])
 
 
 __all__ = [
-    "SplineBasisOpts",
-    "SplineFitResult",
-    "SplineObject",
-    "fit_spline_basis",
+    "SplineObject", "SplineFitResult", "fit_splinefits", "spline_result_from_kernel",
 ]

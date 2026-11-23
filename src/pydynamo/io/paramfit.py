@@ -151,6 +151,8 @@ def write_paramfit_csv(
         f.write(f"# writer: {stamp.writer}\n")
         f.write(f"# writer_version: {stamp.writer_version}\n")
         f.write(f"# kernel_version: {stamp.kernel_version}\n")
+        if stamp.semantics is not None:
+            f.write(f"# semantics: {stamp.semantics}\n")
         if subject_id:
             f.write(f"# subjectID: {subject_id}\n")
         f.write(f"# fit_type: {axis}\n")
@@ -175,6 +177,54 @@ def write_paramfit_csv(
         f.write(header + "\n")
         for _, row in table.iterrows():
             f.write(",".join(_cell(row, name) for name in columns) + "\n")
+
+
+def write_paramfit_skipped_csv(
+    path: Path | str,
+    axis: str,
+    so_bins,
+    freq_bins,
+    reason: str,
+    subject_id: str = "",
+    stamp: Provenance | None = None,
+) -> None:
+    """Write the zero-mode paramfit CSV for a fit the kernel declined
+    (a degenerate SOPH), recording why in ``# fit_status: skipped: ...``,
+    as the DYNAM-O app does, so the expected output set is complete."""
+    if axis not in _BG_KEYS:
+        raise ValueError(f"axis must be 'power' or 'phase', got {axis!r}")
+    if stamp is None:
+        from pydynamo.io.stamp import current_stamp
+        stamp = current_stamp()
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    one_line_reason = reason.replace("\n", " ").replace("\r", " ")
+    header = (
+        PARAMFIT_HEADER_POWER if axis == "power" else PARAMFIT_HEADER_PHASE
+    )
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
+        f.write("# DYNAM-O parametric fit\n")
+        f.write(f"# format: {PARAMFIT_CSV_FORMAT}\n")
+        f.write(f"# writer: {stamp.writer}\n")
+        f.write(f"# writer_version: {stamp.writer_version}\n")
+        f.write(f"# kernel_version: {stamp.kernel_version}\n")
+        if stamp.semantics is not None:
+            f.write(f"# semantics: {stamp.semantics}\n")
+        if subject_id:
+            f.write(f"# subjectID: {subject_id}\n")
+        f.write(f"# fit_type: {axis}\n")
+        f.write("# n_modes: 0\n")
+        f.write(f"# fit_status: skipped: {one_line_reason}\n")
+        for key in _BG_KEYS[axis]:
+            f.write(f"# background.{key}: NaN\n")
+        f.write("# unit_row: NaN\n")
+        for key in ("sse", "rsquare", "dfe", "adjrsquare", "rmse"):
+            f.write(f"# gof.{key}: NaN\n")
+        f.write(f"# freq_bins: {_json_row(freq_bins)}\n")
+        f.write(f"# {_SO_FIELD[axis]}: {_json_row(so_bins)}\n")
+        f.write("# fitobj_coefnames: []\n")
+        f.write("# fitobj_coefvalues: []\n")
+        f.write(header + "\n")
 
 
 def _parse_metadata(extras: dict) -> dict:

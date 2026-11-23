@@ -76,6 +76,7 @@ def write_soph_tiff(
         "writer": stamp.writer,
         "writer_version": stamp.writer_version,
         "kernel_version": stamp.kernel_version,
+        "semantics": stamp.semantics,
     }
 
     path = Path(path)
@@ -101,6 +102,7 @@ def _stamp_from_meta(meta: dict) -> Provenance:
         writer=meta.get("writer"),
         writer_version=meta.get("writer_version"),
         kernel_version=meta.get("kernel_version"),
+        semantics=meta.get("semantics"),
     )
 
 
