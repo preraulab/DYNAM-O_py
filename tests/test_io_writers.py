@@ -13,7 +13,6 @@ import pytest
 
 import pydynamo.io as pio
 from pydynamo.io.stats import STATS_CSV_HEADER, STATS_CSV_HEADER_V1
-from pydynamo.soph.paramfit.output import create_params_table
 
 
 @pytest.fixture
@@ -23,6 +22,7 @@ def stamp():
         writer="pydynamo",
         writer_version="0.2.0+abcdefabcdef",
         kernel_version="0.2.1+abcdefabcdef",
+        semantics=16,
     )
 
 
@@ -37,9 +37,8 @@ def stats_df():
         "Bandwidth": [0.5, 0.7],
         "Volume": [1.0, 1.1],
         "Peakiness": [5.0, 5.5],
-        "BoundingBox": [(9.5, 12.0, 1.2, 0.5), (19.5, 13.5, 1.3, 0.7)],
-        "Boundaries": [np.zeros((2, 2)), np.zeros((2, 2))],
-        "HeightData": [np.array([1.0]), np.array([2.0])],
+        "bbox_tl_s": [9.5, 19.5],
+        "bbox_tl_Hz": [12.0, 13.5],
         "SegmentNum": [3, 3],
         "PeakStage": [2.0, 3.0],
         "SOpower": [0.42, np.nan],
@@ -52,26 +51,31 @@ def stats_df():
 def test_stats_csv_first_data_line_is_canonical_header(
     tmp_path, stats_df, stamp,
 ):
+    import dynamo_rs
+
     p = tmp_path / "s.csv"
-    pio.write_stats_csv(stats_df, p, stamp, subject_id="S001")
+    pio.write_stats_csv(stats_df, p, stamp, subject_id="S001", fs=100.0)
     lines = p.read_text().splitlines()
     non_comment = [ln for ln in lines if not ln.startswith("#")]
     assert non_comment[0] == STATS_CSV_HEADER
-    # Preamble carries exactly the frozen stamp block (§8.1).
+    # The kernel writer's preamble (§8.1): the writer identity comes from
+    # the stamp, the kernel identity and semantics from the kernel itself.
     assert lines[0] == "# DYNAM-O stats table"
     assert lines[1] == "# format: 3"
     assert lines[2] == "# writer: pydynamo"
     assert lines[3] == "# writer_version: 0.2.0+abcdefabcdef"
-    assert lines[4] == "# kernel_version: 0.2.1+abcdefabcdef"
-    assert lines[5] == "# subjectID: S001"
+    assert lines[4] == f"# kernel_version: {dynamo_rs.build_info()['build_info']}"
+    assert lines[5] == f"# semantics: {dynamo_rs.SEMANTICS_VERSION}"
+    assert lines[6] == "# subjectID: S001"
 
 
 def test_stats_csv_round_trip(tmp_path, stats_df, stamp):
     p = tmp_path / "s.csv"
-    pio.write_stats_csv(stats_df, p, stamp, subject_id="S001")
+    pio.write_stats_csv(stats_df, p, stamp, subject_id="S001", fs=100.0)
     df, prov = pio.read_stats_csv(p)
     assert prov.format == 3
     assert prov.writer == "pydynamo"
+    assert prov.semantics == 16
     assert list(df.columns) == STATS_CSV_HEADER.split(",")
     assert df["PeakFrequency"].tolist() == [12.5, 14.0]
     assert df["bbox_tl_s"].tolist() == [9.5, 19.5]
@@ -81,18 +85,19 @@ def test_stats_csv_round_trip(tmp_path, stats_df, stamp):
     assert df["PeakTime"][0] == 10.123457
 
 
-def test_stats_csv_provenance_is_preamble_only(tmp_path, stats_df, stamp):
-    # stamp=None writes the bare format-2 file with byte-identical data.
-    stamped = tmp_path / "stamped.csv"
-    bare = tmp_path / "bare.csv"
-    pio.write_stats_csv(stats_df, stamped, stamp, subject_id="S001")
-    pio.write_stats_csv(stats_df, bare, None)
-    stamped_lines = stamped.read_text().splitlines()
-    stripped = [ln for ln in stamped_lines if not ln.startswith("#")]
-    assert stripped == bare.read_text().splitlines()
-    _, prov = pio.read_stats_csv(bare)
-    assert prov.format == 2, "bare 14-column file infers format 2"
-    assert prov.writer is None
+def test_stats_csv_precision_follows_settings(tmp_path, stats_df, stamp):
+    from pydynamo.settings import default_settings
+
+    stats_df = stats_df.assign(Height=[0.123456, 0.9])
+    settings = default_settings()
+    settings["output"]["csv_height_sigfigs"] = 4
+    # Time precision never drops below sub-sample resolution at fs.
+    settings["output"]["csv_time_sigfigs"] = 2
+    p = tmp_path / "s.csv"
+    pio.write_stats_csv(stats_df, p, stamp, fs=100.0, settings=settings)
+    df, _ = pio.read_stats_csv(p)
+    assert df["Height"][0] == 0.1235
+    assert df["PeakTime"][0] == 10.123457
 
 
 def test_stats_csv_reads_handwritten_format1_fixture(tmp_path):
@@ -128,22 +133,20 @@ def test_stats_csv_rejects_unknown_header(tmp_path):
         pio.read_stats_csv(p)
 
 
-def test_io_compat_load_stats_csv_skips_preamble(tmp_path, stats_df, stamp):
-    from pydynamo.io_compat import load_stats_csv
-
-    p = tmp_path / "s.csv"
-    pio.write_stats_csv(stats_df, p, stamp, subject_id="S001")
-    df = load_stats_csv(p)
-    assert len(df) == 2
-    assert "PeakTime" in df.columns
-
-
 # ------------------------------------------------------------- paramfit CSV
 
+def _params_table(row: dict) -> pd.DataFrame:
+    """A one-mode paramfit table. Columns not given are left out, and the
+    writer fills them with NaN (PkCount with 0)."""
+    return pd.DataFrame([row])
+
+
 def _power_fit():
-    table = create_params_table(
-        np.array([[2.0, 11.0, 1.5, 3.0, 4.0, 0.0]]), "power"
-    )
+    table = _params_table({
+        "Density": 2.0, "FreqMean": 11.0, "FreqStd": 1.5,
+        "SOpowerMean": 3.0, "SOpowerStd": 4.0, "Theta": 0.0,
+        "Volume": 2.0 * 2.0 * np.pi * 4.0 * 1.5,
+    })
     return SimpleNamespace(
         background=np.array([0.1, 0.2, 0.3]),
         gof={"sse": 1.0, "rsquare": 0.9, "adjrsquare": 0.8,
@@ -169,7 +172,7 @@ def test_paramfit_csv_round_trip_power(tmp_path, stamp):
     np.testing.assert_allclose(meta["freq_bins"], [10.0, 11.0, 12.0])
     assert df.columns[0] == "Density"
     assert "PrefPhase" in df.columns and "PkSOphase" in df.columns
-    # Mode volume: density * 2π * xstd * fstd.
+    # The table's values are written as they are.
     np.testing.assert_allclose(
         df["Volume"][0], 2.0 * 2.0 * np.pi * 4.0 * 1.5
     )
@@ -177,9 +180,10 @@ def test_paramfit_csv_round_trip_power(tmp_path, stamp):
 
 
 def test_paramfit_csv_round_trip_phase(tmp_path, stamp):
-    table = create_params_table(
-        np.array([[0.5, 11.0, 1.5, 0.3, 1.2, 0.0]]), "phase"
-    )
+    table = _params_table({
+        "Density": 0.5, "FreqMean": 11.0, "FreqStd": 1.5,
+        "SOphaseMean": 0.3, "SOphaseStd": 1.2, "Theta": 0.0,
+    })
     fit = SimpleNamespace(
         background=np.array([0.4, -0.5, 0.6]),
         gof={"sse": 1.0, "rsquare": 0.9, "adjrsquare": 0.8,
@@ -193,8 +197,8 @@ def test_paramfit_csv_round_trip_phase(tmp_path, stamp):
     df, meta, prov = pio.read_paramfit_csv(p)
     assert meta["fit_type"] == "phase"
     assert meta["background.SinAmp"] == 0.4
-    # The canonical phase column set includes the cross-axis SOpowerMean
-    # (NaN placeholder — pydynamo's table does not carry it).
+    # The canonical phase column set includes the cross-axis SOpowerMean;
+    # a table without it is written with NaN there.
     assert list(df.columns[:8]) == [
         "Density", "FreqMean", "FreqStd", "SOphaseMean", "SOphaseStd",
         "Theta", "Volume", "SOpowerMean",
@@ -426,24 +430,6 @@ def test_runs_jsonl_header_and_item_key_sets(tmp_path, stamp):
     )
 
 
-# ------------------------------------------------------- fallback provenance
-
-def test_writers_stamp_python_native_when_fallback_latched(tmp_path):
-    from pydynamo import _kernel
-    from pydynamo.io.stamp import current_stamp
-
-    saved = _kernel.FALLBACK_ACTIVE
-    try:
-        _kernel.FALLBACK_ACTIVE = True
-        df = pd.DataFrame()
-        p = tmp_path / "s.csv"
-        pio.write_stats_csv(df, p, current_stamp(), subject_id="S1")
-        _, prov = pio.read_stats_csv(p)
-        assert prov.kernel_version == "python-native"
-    finally:
-        _kernel.FALLBACK_ACTIVE = saved
-
-
 def test_paramfit_csv_peak_assign_preamble(tmp_path, stamp):
     # The line is emitted when a label is supplied and surfaces on read.
     p = tmp_path / "pf.csv"
@@ -464,3 +450,16 @@ def test_paramfit_csv_peak_assign_preamble(tmp_path, stamp):
     assert "peak_assign" not in q.read_text()
     _, meta, _ = pio.read_paramfit_csv(q)
     assert "peak_assign" not in meta
+
+
+def test_paramfit_skipped_csv(tmp_path, stamp):
+    p = tmp_path / "skipped.csv"
+    pio.write_paramfit_skipped_csv(
+        p, "phase", [-1.0, 0.0, 1.0], [10.0, 11.0], "SOPH has no finite cells",
+        "S1", stamp,
+    )
+    lines = p.read_text().splitlines()
+    assert "# n_modes: 0" in lines
+    assert "# fit_status: skipped: SOPH has no finite cells" in lines
+    assert "# semantics: 16" in lines
+    assert lines[-1].startswith("Density,FreqMean,FreqStd,SOphaseMean")

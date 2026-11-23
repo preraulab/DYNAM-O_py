@@ -1,35 +1,19 @@
 """Parametric-basis fitting (SOPH dimensionality reduction).
 
-Port of DYNAM-O/toolbox/SOPH_dim_reduction/parametric_basis/. The
-nonlinear fits themselves are the shared Rust kernels
-(`dynamo_rs.fit_rotgauss` / `fit_vmgauss`); this package is the mode search,
-seeding, and model-selection loop around them.
+A wrapper over the shared Rust kernel (`dynamo_rs.fit_paramfits`): the
+seeding, mode loop, model selection and the per-mode table all run there,
+the same code the DYNAM-O desktop app runs.
 """
 
-from pydynamo.soph.paramfit.basis import (
-    eval_modes, mode_overlap, rot_gauss, select_mode, vm_gauss,
-)
 from pydynamo.soph.paramfit.core import (
-    ParamFitResult, fit_param_basis, fit_param_basis_axis,
+    PK_COLUMNS, ParamFitResult, fit_paramfits, paramfit_result_from_kernel,
+    rebuild_phase_model,
 )
-from pydynamo.soph.paramfit.histpeaks import extract_hist_peaks, seeds_from_stats
-from pydynamo.soph.paramfit.opts import ParamBasisOpts
-from pydynamo.soph.paramfit.seed import residual_max_seed
-from pydynamo.soph.paramfit.select import kneedle, select_iteration
 
 __all__ = [
-    "ParamBasisOpts",
+    "PK_COLUMNS",
     "ParamFitResult",
-    "fit_param_basis",
-    "fit_param_basis_axis",
-    "extract_hist_peaks",
-    "seeds_from_stats",
-    "eval_modes",
-    "mode_overlap",
-    "rot_gauss",
-    "vm_gauss",
-    "select_mode",
-    "residual_max_seed",
-    "select_iteration",
-    "kneedle",
+    "fit_paramfits",
+    "paramfit_result_from_kernel",
+    "rebuild_phase_model",
 ]

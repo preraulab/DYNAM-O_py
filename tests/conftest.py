@@ -1,78 +1,40 @@
-"""Shared pytest fixtures for pydynamo equivalence tests."""
+"""Shared pytest fixtures for pydynamo."""
 
 from pathlib import Path
 
+import numpy as np
 import pytest
 
-DATA_CACHE = Path(__file__).parent.parent / "data_cache"
+#: The DYNAM-O_toolbox checkout this repo sits in, if any.
+TOOLBOX_ROOT = Path(__file__).resolve().parents[2]
 
 
 @pytest.fixture(scope="session")
-def segment_out_compat():
-    """segment_out_compat.mat produced by scripts/export_matlab_ground_truth.m."""
-    import h5py  # v7.3 MAT = HDF5
-    path = DATA_CACHE / "segment_out_compat.mat"
-    if not path.exists():
-        pytest.skip(
-            f"{path} not found. Run scripts/export_matlab_ground_truth.m in MATLAB first."
-        )
-    # Cache as a dict of numpy arrays, transposing from MATLAB (column-major)
-    # to NumPy (row-major) conventions.
-    import numpy as np
-    data = {}
-    def _load(obj):
-        arr = np.asarray(obj[...])
-        if arr.ndim >= 2:
-            arr = arr.T
-        # MATLAB row/column vectors arrive as (1, N) or (N, 1); squeeze them.
-        arr = np.squeeze(arr)
-        return arr
+def synthetic_night():
+    """Twenty minutes of synthetic sleep EEG at 100 Hz: a 0.8 Hz slow
+    oscillation, 13 Hz spindle bursts locked to its up-phase, pink-ish
+    noise and one flat-line stretch (an artifact), staged N2/N3 with a
+    wake epoch. Seeded, so every test sees the same recording."""
+    rng = np.random.default_rng(20261122)
+    fs = 100.0
+    duration_s = 20 * 60
+    t = np.arange(int(duration_s * fs)) / fs
 
-    with h5py.File(path, "r") as f:
-        for key in f.keys():
-            if key.startswith("#"):
-                continue
-            obj = f[key]
-            if isinstance(obj, h5py.Dataset):
-                data[key] = _load(obj)
-            else:  # group (struct) — SOPHs_flat
-                data[key] = {subk: _load(obj[subk]) for subk in obj.keys()}
-    return data
+    slow_oscillation = 40.0 * np.sin(2 * np.pi * 0.8 * t)
+    spindle_envelope = np.zeros_like(t)
+    for start in np.arange(20.0, duration_s - 20.0, 7.3):
+        width = 0.6 + 0.4 * rng.random()
+        spindle_envelope += np.exp(-0.5 * ((t - start) / (width / 2.5)) ** 2)
+    up_phase = 0.5 * (1.0 + np.sin(2 * np.pi * 0.8 * t))
+    spindles = 18.0 * spindle_envelope * up_phase * np.sin(2 * np.pi * 13.0 * t)
+    noise = np.cumsum(rng.normal(size=t.size))
+    noise = 4.0 * (noise - np.convolve(noise, np.ones(200) / 200, mode="same"))
+    noise += 3.0 * rng.normal(size=t.size)
+    data = slow_oscillation + spindles + noise
+    data[int(600 * fs):int(612 * fs)] = 0.0  # flat line -> artifact
 
-
-@pytest.fixture(scope="session")
-def stats_table_matlab():
-    """MATLAB-exported stats_table CSV as a pandas DataFrame."""
-    import pandas as pd
-    path = DATA_CACHE / "segment_stats.csv"
-    if not path.exists():
-        pytest.skip(
-            f"{path} not found. Run scripts/export_matlab_ground_truth.m in MATLAB first."
-        )
-    return pd.read_csv(path)
-
-
-@pytest.fixture(scope="session")
-def example_data():
-    """Load DYNAM-O/example_data/example_data.mat — the raw EEG input."""
-    import scipy.io as sio
-    path = Path(__file__).resolve().parents[2] / "DYNAM-O" / "example_data" / "example_data.mat"
-    if not path.exists():
-        pytest.skip(f"{path} not found.")
-    return sio.loadmat(str(path), simplify_cells=True)
-
-
-@pytest.fixture(autouse=True)
-def _isolate_kernel_fallback_latch():
-    """Keep the process-wide fallback latch from leaking between tests.
-
-    Parity tests deliberately monkeypatch the per-module _HAS_RUST flags
-    to exercise the pure-Python fallbacks, which (correctly) latches
-    pydynamo._kernel.FALLBACK_ACTIVE. In production the latch is
-    process-lifetime by design; in the suite it must not make later
-    provenance assertions order-dependent.
-    """
-    from pydynamo import _kernel
-    saved = _kernel.FALLBACK_ACTIVE
-    yield
-    _kernel.FALLBACK_ACTIVE = saved
+    stage_times = np.arange(0.0, duration_s, 30.0)
+    stage_vals = np.full(stage_times.size, 2.0)
+    stage_vals[10:20] = 1.0   # N3
+    stage_vals[30] = 5.0      # wake
+    return {"data": data, "fs": fs, "stage_times": stage_times, "stage_vals": stage_vals}

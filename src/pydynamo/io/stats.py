@@ -1,24 +1,19 @@
 """TFpeaks stats-table CSV (OUTPUT_FORMAT.md §2.1, format 3).
 
-Serializes the in-memory ``stats_table`` DataFrame built by
-`pydynamo.tfpeaks.stats.compute_peak_stats` (plus the per-peak
-``PeakStage`` / ``SOpower`` / ``SOphase`` columns appended by
-`run_dynamo`) onto the canonical 14-column layout written by
-`dynamo_rs::pipeline::write_stats_csv`:
+Writes a run's ``stats_table`` through the kernel's
+`dynamo_rs::pipeline::write_stats_csv`, the DYNAM-O app's writer, onto the
+canonical 14-column layout:
 
     PeakTime,PeakFrequency,Duration,Bandwidth,Height,Volume,SegmentNum,
     Area,Peakiness,bbox_tl_s,bbox_tl_Hz,PeakStage,SOpower,SOphase
 
-Only the bounding-box top-left corner is emitted (``BoundingBox[0:2]``);
-the extents duplicate ``Duration`` / ``Bandwidth`` exactly. The
-in-memory-only ``Label`` / ``Boundaries`` / ``HeightData`` columns are
-dropped. Float columns round to class-based significant figures
-(§6.2 defaults: time 8, freq/phase/other 6) before text-encoding.
+Only the bounding-box top-left corner is stored; the extents equal
+``Duration`` / ``Bandwidth`` exactly. Float columns round to
+class-based significant figures (§6.2).
 """
 
 from __future__ import annotations
 
-import math
 from pathlib import Path
 
 import numpy as np
@@ -46,141 +41,52 @@ STATS_CSV_HEADER_V1 = (
     "PeakStage,SOpower,SOphase"
 )
 
-# Default per-class significant figures, matching
-# `dynamo_rs::pipeline::StatsCsvPrecision::default()` (fs = 100 Hz).
-_TIME_SIGFIGS = 8
-_FREQ_SIGFIGS = 6
-_PHASE_SIGFIGS = 6
-_OTHER_SIGFIGS = 6
-
-
-def _round_sig(v: float, n: int) -> float:
-    """Round to ``n`` significant figures, half away from zero.
-
-    Port of `dynamo_rs::pipeline::round_sig` (which uses f64 ``round``,
-    half-away-from-zero — not Python's banker's rounding). ``0`` / NaN /
-    infinities pass through.
-    """
-    if v == 0.0 or not math.isfinite(v):
-        return v
-    m = math.floor(math.log10(abs(v)))
-    p = 10.0 ** ((n - 1) - m)
-    scaled = v * p
-    r = math.floor(scaled + 0.5) if scaled >= 0.0 else math.ceil(scaled - 0.5)
-    return r / p
-
-
-def _fmt_float(v: float) -> str:
-    """Shortest round-trippable text for one float cell.
-
-    Matches the Rust writer's spellings for the special values (`NaN`,
-    `inf`, `-inf`) and drops the trailing ``.0`` Python's repr keeps on
-    integral floats (Rust Display prints ``1``, not ``1.0``).
-    """
-    if math.isnan(v):
-        return "NaN"
-    if math.isinf(v):
-        return "inf" if v > 0 else "-inf"
-    s = repr(float(v))
-    if s.endswith(".0"):
-        s = s[:-2]
-    return s
-
-
 def write_stats_csv(
     df: pd.DataFrame,
     path: Path | str,
-    stamp: Provenance | None,
+    stamp: Provenance | None = None,
     subject_id: str | None = None,
+    *,
+    fs: float,
+    settings: dict | None = None,
 ) -> None:
-    """Write the in-memory stats table as a canonical stats CSV.
+    """Write a stats table as a canonical stats CSV, with the kernel's
+    writer (the one the DYNAM-O app uses): same columns, the same
+    precision rules (``settings["output"]["csv_*_sigfigs"]`` resolved
+    against ``fs``, the rate the run used), and the §8.1 preamble with the
+    ``# semantics:`` line.
 
     Parameters
     ----------
-    df : DataFrame from `run_dynamo` (``output.stats_table``). Requires
-         the numeric peak columns plus ``BoundingBox``; ``PeakStage`` /
-         ``SOpower`` / ``SOphase`` default to 0 / NaN / NaN when absent
-         (e.g. a partial pipeline run).
+    df : the run's ``stats_table`` (the :data:`STATS_CSV_HEADER` columns).
     path : output file; parent directories are created.
-    stamp : the §8.1 provenance stamp for the preamble. ``format`` is
-            overridden to :data:`STATS_CSV_FORMAT`. ``None`` writes the
-            bare format-2 file — identical data rows, no ``#`` lines —
-            mirroring the Rust writer's ``prov: None`` path.
-    subject_id : emitted as ``# subjectID:`` when non-empty (and a
-                 preamble is being written).
+    stamp : the provenance to record; ``None`` uses this process's.
+    subject_id : emitted as ``# subjectID:`` when non-empty.
+    fs : the run's sample rate (``DynamoOutput.fs``).
+    settings : the run's settings section (``DynamoOutput.settings``);
+               None uses the default precision.
     """
+    import json
+
+    from pydynamo import _kernel
+    from pydynamo.io.stamp import current_stamp
+
+    if stamp is None:
+        stamp = current_stamp()
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-
-    n = len(df)
-
-    def _col(name: str, default: float) -> np.ndarray:
-        if name in df.columns:
-            return df[name].to_numpy(dtype=float)
-        return np.full(n, default)
-
-    peak_time = _col("PeakTime", math.nan)
-    peak_freq = _col("PeakFrequency", math.nan)
-    duration = _col("Duration", math.nan)
-    bandwidth = _col("Bandwidth", math.nan)
-    height = _col("Height", math.nan)
-    volume = _col("Volume", math.nan)
-    area = _col("Area", math.nan)
-    peakiness = _col("Peakiness", math.nan)
-    segment_num = _col("SegmentNum", 1.0)
-    peak_stage = _col("PeakStage", 0.0)
-    so_power = _col("SOpower", math.nan)
-    so_phase = _col("SOphase", math.nan)
-
-    if "BoundingBox" in df.columns and n > 0:
-        bbox = np.asarray(
-            [np.asarray(b, dtype=float).ravel()[:2] for b in df["BoundingBox"]]
-        )
-        bbox_tl_s = bbox[:, 0]
-        bbox_tl_hz = bbox[:, 1]
-    else:
-        bbox_tl_s = np.full(n, math.nan)
-        bbox_tl_hz = np.full(n, math.nan)
-
-    def t(v: float) -> str:
-        return _fmt_float(_round_sig(v, _TIME_SIGFIGS))
-
-    def fz(v: float) -> str:
-        return _fmt_float(_round_sig(v, _FREQ_SIGFIGS))
-
-    def ph(v: float) -> str:
-        return _fmt_float(_round_sig(v, _PHASE_SIGFIGS))
-
-    def other(v: float) -> str:
-        return _fmt_float(_round_sig(v, _OTHER_SIGFIGS))
-
-    with open(path, "w", encoding="utf-8", newline="\n") as f:
-        if stamp is not None:
-            f.write("# DYNAM-O stats table\n")
-            f.write(f"# format: {STATS_CSV_FORMAT}\n")
-            f.write(f"# writer: {stamp.writer}\n")
-            f.write(f"# writer_version: {stamp.writer_version}\n")
-            f.write(f"# kernel_version: {stamp.kernel_version}\n")
-            if subject_id:
-                f.write(f"# subjectID: {subject_id}\n")
-        f.write(STATS_CSV_HEADER + "\n")
-        for i in range(n):
-            f.write(",".join((
-                t(peak_time[i]),
-                fz(peak_freq[i]),
-                t(duration[i]),
-                fz(bandwidth[i]),
-                other(height[i]),
-                other(volume[i]),
-                str(int(segment_num[i])),
-                other(area[i]),
-                other(peakiness[i]),
-                t(bbox_tl_s[i]),
-                fz(bbox_tl_hz[i]),
-                str(int(peak_stage[i]) if math.isfinite(peak_stage[i]) else 0),
-                other(so_power[i]),
-                ph(so_phase[i]),
-            )) + "\n")
+    columns = {}
+    for name in STATS_CSV_HEADER.split(","):
+        columns[name] = np.ascontiguousarray(df[name].to_numpy(dtype=float))
+    _kernel.rs().write_stats_csv(
+        str(path),
+        columns,
+        float(fs),
+        None if settings is None else json.dumps(settings),
+        stamp.writer or "pydynamo",
+        stamp.writer_version or "unknown",
+        subject_id or "",
+    )
 
 
 def read_stats_csv(path: Path | str) -> tuple[pd.DataFrame, Provenance]:

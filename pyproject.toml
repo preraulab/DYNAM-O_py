@@ -4,21 +4,16 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pydynamo"
-version = "0.2.0"
-description = "Minimal Python port of the DYNAM-O sleep EEG toolbox (TF-peaks + SO-power/phase histograms)"
+version = "0.3.0"
+description = "DYNAM-O sleep EEG analysis (TF-peaks, SO-power/phase histograms, fits) from Python, computed by the shared Rust kernel"
 requires-python = ">=3.9"
 dependencies = [
     "numpy>=1.24",
     "scipy>=1.11",
-    "scikit-image>=0.22",
     "matplotlib>=3.7",
     "pandas>=2.0",
-    "joblib>=1.3",
-    "tqdm>=4.65",
-    "colorcet>=3.0",
-    # Rust compute kernel; io_edf.py imports it unconditionally and
-    # pydynamo.io stamps its build identity into every artifact.
-    "dynamo_rs>=0.2.1",
+    # The Rust kernel computes every number pydynamo produces.
+    "dynamo_rs>=0.2.2",
     # Canonical output-tree writers (pydynamo.io).
     "tifffile>=2023.7.10",
     "h5py>=3.9",
@@ -31,4 +26,4 @@ test = ["pytest>=7"]
 where = ["src"]
 
 [tool.setuptools.package-data]
-pydynamo = ["py.typed", "_cmap_*.npy", "data_matlab_filters/*.npy"]
+pydynamo = ["py.typed", "_cmap_*.npy"]

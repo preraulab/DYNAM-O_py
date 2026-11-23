@@ -64,6 +64,8 @@ def write_auxiliary_data_h5(
     artifact_spans=None,
     stage_times=None,
     stage_vals=None,
+    baseline=None,
+    baseline_freqs=None,
     subject_id: str = "",
     stamp: Provenance | None = None,
 ) -> None:
@@ -80,6 +82,10 @@ def write_auxiliary_data_h5(
     artifact_spans : ``(K, 2)`` array-like of ``[start_s, end_s]`` runs.
     stage_times, stage_vals : staging timeline; ``stage_vals`` are the
         0..6 stage codes.
+    baseline, baseline_freqs : the extraction baseline (linear power) and
+        its frequencies, which a rebuild from this file needs for the
+        ``PkPower`` column. Written only when both are given with equal
+        lengths.
     stamp : §8.1 provenance; ``None`` uses this process's current stamp.
     """
     if stamp is None:
@@ -121,11 +127,20 @@ def write_auxiliary_data_h5(
         _write_string_scalar(
             f, "kernel_version", stamp.kernel_version or "unknown"
         )
+        if stamp.semantics is not None:
+            _write_f64_2d(f, "semantics", np.array([[float(stamp.semantics)]]))
         _write_string_scalar(
             f, "code_version", stamp.writer_version or "unknown"
         )
 
         _write_string_scalar(f, "SOpower_norm_method", so_power_norm_method)
+        baseline = np.asarray([] if baseline is None else baseline, dtype=np.float64).ravel()
+        baseline_freqs = np.asarray(
+            [] if baseline_freqs is None else baseline_freqs, dtype=np.float64
+        ).ravel()
+        if baseline.size and baseline.size == baseline_freqs.size:
+            _write_f64_2d(f, "baseline", baseline.reshape(1, -1))
+            _write_f64_2d(f, "baseline_freqs", baseline_freqs.reshape(1, -1))
         _write_f64_2d(
             f, "SOpower_window_params",
             np.array(so_power_window_params, dtype=np.float64).reshape(2, 1),
@@ -163,7 +178,8 @@ def read_auxiliary_data_h5(path: Path | str) -> tuple[dict, Provenance]:
     arguments — ``fs``, ``so_power_norm``, ``so_power_t_start``,
     ``so_power_norm_method``, ``so_power_window_params``,
     ``so_power_freqrange``, ``artifact_spans``, ``stage_times``,
-    ``stage_vals``, ``subject_id`` — with ``None`` / empty values for
+    ``stage_vals``, ``baseline``, ``baseline_freqs``, ``subject_id`` —
+    with ``None`` / empty values for
     optional datasets that are absent (legacy files predate several).
     Unknown datasets are ignored (§2.3); a missing stamp yields an
     all-``None`` provenance except ``format`` (format-1 files carried
@@ -186,6 +202,9 @@ def read_auxiliary_data_h5(path: Path | str) -> tuple[dict, Provenance]:
             writer_version=_read_string_scalar(f, "writer_version"),
             kernel_version=_read_string_scalar(f, "kernel_version"),
         )
+        semantics = _scalar("semantics")
+        if semantics is not None:
+            stamp.semantics = int(semantics)
         if stamp.writer_version is None:
             # Legacy dataset (format 1): code_version was the writing
             # tool's build.
@@ -214,6 +233,8 @@ def read_auxiliary_data_h5(path: Path | str) -> tuple[dict, Provenance]:
             "stage_vals": (
                 np.asarray(f["stage_vals"][()], dtype=np.uint8).ravel()
                 if "stage_vals" in f else np.array([], dtype=np.uint8)),
+            "baseline": _vector("baseline"),
+            "baseline_freqs": _vector("baseline_freqs"),
             "subject_id": _read_string_scalar(f, "subjectID") or "",
         }
     return aux, stamp

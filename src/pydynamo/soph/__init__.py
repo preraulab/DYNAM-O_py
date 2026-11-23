@@ -1,1 +1,1 @@
-"""SO-power and SO-phase timeseries + 2D histograms."""
+"""SO-power and SO-phase histogram fits (wrappers over the kernel)."""

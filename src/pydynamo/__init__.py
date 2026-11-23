@@ -1,29 +1,40 @@
-"""pydynamo — minimal Python port of DYNAM-O.
+"""pydynamo: the DYNAM-O sleep-EEG analysis from Python.
 
-Exposes:
-    run_dynamo(data, fs, stage_times, stage_vals, ...) -> DynamoOutput
+Every number comes from the shared Rust kernel (``dynamo_rs``), the code
+the DYNAM-O desktop app and CLI run, so a pydynamo run of a recording
+matches an app run of it under the same settings.
 
-Stage convention (DYNAM-O): 1=N3, 2=N2, 3=N1, 4=REM, 5=Wake — reversed from
-most EDF stagers. Histograms default to NREM (stages 1, 2, 3).
+    from pydynamo import load_recording, load_settings, run_dynamo, write_run
+
+    rec = load_recording("night.edf", "C3-A2", "night_staging.csv")
+    out = run_dynamo(rec.data, rec.fs, rec.stage_times, rec.stage_vals,
+                     settings=load_settings("batch_settings.json"))
+    write_run(out, "results", "night", "C3-A2")
+
+Stage convention (DYNAM-O): 1=N3, 2=N2, 3=N1, 4=REM, 5=Wake.
 """
 
-from pydynamo.defaults import DetectionOpts, BaselineOpts, SOPHOpts
-from pydynamo.pipeline import run_dynamo, DynamoOutput
+from pydynamo.io.run_tree import write_run
+from pydynamo.load import Recording, load_from_settings_file, load_recording
+from pydynamo.pipeline import DynamoOutput, SOPHsResult, run_dynamo
 from pydynamo.plot import summary_plot
-from pydynamo.soph.paramfit import ParamBasisOpts, ParamFitResult
-from pydynamo.soph.splinefit import (
-    SplineBasisOpts,
-    SplineFitResult,
-    SplineObject,
+from pydynamo.settings import (
+    SEMANTICS_VERSION, default_settings, load_settings, merge_settings, migrate_settings,
 )
-from pydynamo import matlab_api  # noqa: F401  — exposed for `py.pydynamo.matlab_api.*`
+from pydynamo.soph.paramfit import ParamFitResult, fit_paramfits
+from pydynamo.soph.splinefit import SplineFitResult, SplineObject, fit_splinefits
 
-__all__ = ["run_dynamo", "summary_plot", "DynamoOutput", "DetectionOpts",
-           "BaselineOpts", "SOPHOpts", "ParamBasisOpts", "ParamFitResult",
-           "SplineBasisOpts", "SplineFitResult", "SplineObject", "matlab_api"]
+__all__ = [
+    "run_dynamo", "DynamoOutput", "SOPHsResult",
+    "load_recording", "load_from_settings_file", "Recording",
+    "load_settings", "default_settings", "merge_settings", "migrate_settings",
+    "SEMANTICS_VERSION",
+    "fit_paramfits", "ParamFitResult", "fit_splinefits", "SplineFitResult", "SplineObject",
+    "summary_plot", "write_run",
+]
 
 try:
     from importlib.metadata import PackageNotFoundError, version as _pkg_version
     __version__ = _pkg_version("pydynamo")
 except PackageNotFoundError:  # running from a source tree, not installed
-    __version__ = "0.2.0"
+    __version__ = "0.3.0"

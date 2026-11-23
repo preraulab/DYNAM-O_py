@@ -24,7 +24,6 @@ from matplotlib.colors import ListedColormap, LinearSegmentedColormap
 from matplotlib.patches import Rectangle
 from scipy.interpolate import interp1d
 
-from pydynamo.spectrogram import _mts, _next_pow2
 
 
 # ---------------------------------------------------------------------------
@@ -202,7 +201,6 @@ def summary_plot(
     spect, stimes, sfreqs, artifacts, t_data,
     stage_times, stage_vals, stats, sophs,
     *,
-    data=None, fs=None,
     freq_limits: tuple[float, float] = (2.0, 25.0),
     mtm_freq_range: tuple[float, float] = (2.0, 25.0),
     time_range: tuple[float, float] | None = None,
@@ -237,19 +235,12 @@ def summary_plot(
     )
     ax_hyp.set_title("EEG Spectrogram", fontsize=15, pad=6, fontweight="bold")
 
-    # ---- Spectrogram (display quality: 30 s window, TW=15, K=29) ----
-    if data is not None and fs is not None:
-        spect_disp, stimes_disp, sfreqs_disp = _mts(
-            np.asarray(data, dtype=np.float64).ravel(), float(fs),
-            list(mtm_freq_range), 15.0, 29, [30.0, 15.0],
-            min_nfft=_next_pow2(float(fs) / 0.1),
-            detrend_opt="linear", multiprocess=True, n_jobs=None,
-            weighting="unity", plot_on=False, verbose=False, xyflip=False,
-        )
-        stimes_disp = stimes_disp + (t_data[0] if len(t_data) else 0)
-        sfreqs_disp = np.asarray(sfreqs_disp)
-    else:
-        spect_disp, stimes_disp, sfreqs_disp = spect, stimes, sfreqs
+    # ---- Spectrogram ----
+    # `spect` is the run's display spectrogram (30 s window, TW=15, K=29,
+    # computed by the kernel), with absolute times.
+    spect_disp = np.asarray(spect, dtype=float)
+    stimes_disp = np.asarray(stimes, dtype=float)
+    sfreqs_disp = np.asarray(sfreqs, dtype=float)
 
     with np.errstate(divide="ignore", invalid="ignore"):
         spect_db = 10 * np.log10(np.where(spect_disp > 0, spect_disp, np.nan))
