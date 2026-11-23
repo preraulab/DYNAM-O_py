@@ -1,83 +1,25 @@
 # DYNAM-O_py
 
-Python + Rust port of [DYNAM-O](https://github.com/preraulab/DYNAM-O): TF-peak
-extraction (double watershed + merge + trim + Hann refinement), SO-power /
-SO-phase histograms, and a MATLAB-style summary figure.
-The repository is named **DYNAM-O_py**, while the Python package is named
-`pydynamo`.
+DYNAM-O from Python: TF-peak extraction, SO-power and SO-phase histograms
+(SOPHs), and their parametric and spline fits, for sleep EEG. The repository
+is named **DYNAM-O_py** and the Python package is named `pydynamo`.
+
+pydynamo is a wrapper over the shared Rust kernel
+[`dynamo_rs`](https://github.com/preraulab/DYNAM-O_rs), the same code the
+DYNAM-O desktop app and `dynamo-cli` run. The whole run (resampling,
+artifact detection, both multitaper passes, baseline, TF-peak extraction
+and refinement, per-peak stage / SO-power / SO-phase, the SOPHs and both
+fit families) is one kernel call, and pydynamo has no Python
+reimplementation of any stage. So given the same recording and settings,
+pydynamo and the app produce the same numbers by construction, and
+pydynamo writes the same files.
 
 ## Siblings
 
-This repo is one of three coordinated implementations of DYNAM-O:
-
-- **[DYNAM-O](https://github.com/preraulab/DYNAM-O)** — authoritative MATLAB implementation. Source-of-truth algorithm, File Manager GUI, full statistical testing suite.
-- **[DYNAM-O_rs](https://github.com/preraulab/DYNAM-O_rs)** — shared pure-Rust kernel (`dynamo_rs`). The hot paths in both MATLAB (via MEX) and Python (via PyO3) delegate here.
-- **[DYNAM-O_toolbox](https://github.com/preraulab/DYNAM-O_toolbox)** — parent bootstrap/orchestration repo that clones, aligns, and builds all three implementations.
-
-## Rust acceleration
-
-The `dynamo_rs` crate (lives in the sibling `DYNAM-O_rs` repo) accelerates the hot paths and now covers the full pipeline surface:
-
-Extract / refine hot paths (the main speedup):
-- `matlab_watershed` — bit-identical to MATLAB IPT `watershed` (Vincent-Soille + FIFO priority).
-- `merge_segment` — port of `mergeWshedSegment` with the symmetric `edgeWeightEqual` rule.
-- `trim_regions` — port of `trimWshedRegions`.
-- `matlab_paint_labels` — 8-conn paint-in-label-order border filling; `pydynamo/tfpeaks/extract.py` now routes through this when `dynamo_rs` is available, which tightens pydynamo↔MATLAB peak-count parity.
-- `mask_spectrogram`, `hann_event_spectra`, `refine_from_spectra`, `tfpeak_histogram`.
-
-Time-series + metadata pipelines (ported this session — mirror pydynamo 1:1):
-- `so_power_from_spectrogram` — post-MTS SO-power pipeline (band-integrate → pow2db → stage interp → outlier z-score → percentile-shift normalization → optional upsample). Bit-identical to `pydynamo.soph.sopower.compute_so_power`.
-- `so_phase_from_eeg` — sosfiltfilt → hilbert → atan2 → unwrap → exclusion masking → stage interp. Bit-identical to `pydynamo.soph.sophase.compute_so_phase`.
-- `detect_artifacts` — two-band (HF + BB) robust-z-score artifact detection. Bit-identical to `pydynamo.artifacts.detect_artifacts(..., slope_test=False)`. (Slope-test branch is a follow-up — needs multitaper.)
-- `build_baseline_exclude`, `compute_baseline`, `subtract_baseline` — full baseline subpipeline.
-- `hilbert`, `sosfiltfilt`, `movmean`, `unwrap` — raw primitives (pydynamo already picks `movmean` up for the artifact detrend).
-- `fit_paramfits` — both parametric-basis fits of a recording's SOPHs and
-  their paramfit tables, the same code the DYNAM-O app and CLI run, so the
-  fits and tables match the app's exactly. pydynamo's
-  `pydynamo.soph.paramfit` is a thin wrapper over it.
-- `fit_tensor_product_spline` — the spline-basis fit kernel.
-  Set `fit_param_basis=False` or `fit_spline_basis=False` to skip either fit
-  family. Each spline result includes a callable `spline_obj` with the fitted
-  coefficients, augmented knots, and spline order.
-
-Multitaper spectrogram delegates to the existing
-[`multitaper_rs`](https://github.com/preraulab/multitaper_toolbox) crate.
-
-## Accuracy vs MATLAB reference
-
-Validated end-to-end against `runDYNAMO` on the bundled example EEG, using the
-real MATLAB pipeline defaults (`detection_opts()`, `baseline_opts()`,
-`SOpowerphasehist_opts()`). Per-stage intermediates are compared via
-`scripts/bisect/*.py` against ground-truth `.mat` files exported by
-`scripts/export_*.m`.
-
-| dataset | pydynamo peaks | MATLAB peaks | diff | **SOpower cos** | **SOphase cos** |
-|---|---:|---:|---:|---:|---:|
-| segment (~84 min) | 5 785 | 5 738 | **+0.8 %** | **0.9958** | **0.9822** |
-| full night (~8.4 h) | 34 911 | 34 788 | **+0.4 %** | **0.9973** | **0.9960** |
-
-Stage-by-stage verification:
-
-| stage | agreement vs MATLAB |
-|---|---|
-| multitaper spectrogram | max_rel ≈ 5e-5 (FFT-library floor) |
-| artifacts | 99.99 % sample agreement |
-| baseline (hazen prctile) | max_rel ≈ 1e-7 (bit-identical) |
-| spect / baseline division | exact |
-| watershed | bit-identical to MATLAB IPT |
-| merge (post-merge region counts) | +0.1 % |
-| pass-2 mask (interior − 1-px perimeter) | matches `maskSpectrogram` exactly |
-| SOpower timeseries | cos = 1.0000 |
-| SOphase timeseries (MATLAB-exact SOS filter) | cos ≈ 0.987 (edge transient); mid-90 % bit-identical (0.0006 rad median) |
-| SOpower / SOphase histogram binning | bit-identical given same stats table |
-
-## Runtime (full night, 8.4 h recording, macOS x86_64)
-
-| stage | pydynamo | MATLAB | speedup |
-|---|---:|---:|---:|
-| **total end-to-end** | **101 s** | **146 s** | **1.45×** |
-| extract pass-1 | 20 s | 84 s | 4.2× |
-| extract pass-2 | 21 s | 32 s | 1.5× |
+- **[DYNAM-O](https://github.com/preraulab/DYNAM-O)**: the MATLAB implementation, with the File Manager GUI and the statistical testing suite.
+- **[DYNAM-O_rs](https://github.com/preraulab/DYNAM-O_rs)**: the shared Rust kernel (`dynamo_rs`). MATLAB (through MEX), the desktop app and pydynamo (through PyO3) all call it. Its tests check it against MATLAB.
+- **[DYNAM-O_DesktopApp](https://github.com/preraulab/DYNAM-O_DesktopApp)**: the desktop app and `dynamo-cli`. Its `documents/` folder holds the settings reference and the output-format spec.
+- **[DYNAM-O_toolbox](https://github.com/preraulab/DYNAM-O_toolbox)**: the bootstrap repo that clones, aligns and builds the others.
 
 ## Install from scratch
 
@@ -101,11 +43,7 @@ artifacts that contain build-machine paths.
   ```
 - **MATLAB and a configured MEX C compiler** are required only for the
   controlled native rebuild, because it also rebuilds DYNAM-O's MATLAB MEX
-  artifacts. MATLAB is not required to run pydynamo after installation. It is
-  otherwise needed only to
-  regenerate ground-truth `.mat` intermediates under `data_cache/` (the
-  `scripts/export_*.m` files). Accuracy benchmarking against MATLAB uses
-  those exported files, which can be produced once and reused.
+  artifacts. MATLAB is not required to run pydynamo after installation.
 
 ### Install
 
@@ -141,236 +79,150 @@ distribution. Do not publish wheels produced through direct Maturin, pip, or
 other PEP 517 build commands as controlled release artifacts.
 
 Python runtime deps (installed automatically by `pip install -e .`):
-numpy ≥ 1.24, scipy ≥ 1.11, scikit-image ≥ 0.22, matplotlib ≥ 3.7, pandas ≥ 2.0,
-joblib ≥ 1.3, tqdm ≥ 4.65, colorcet ≥ 3.0, dynamo_rs ≥ 0.2.1 (built by the
-bootstrap, not fetched from PyPI), tifffile ≥ 2023.7.10, h5py ≥ 3.9.
+numpy ≥ 1.24, scipy ≥ 1.11, matplotlib ≥ 3.7, pandas ≥ 2.0, dynamo_rs ≥ 0.2.2
+(built by the bootstrap, not fetched from PyPI), tifffile ≥ 2023.7.10,
+h5py ≥ 3.9.
 
 ### Verify the install
 
-The bootstrap already runs `scripts/check_install.py` (it checks that
-`pydynamo`, `dynamo_rs`, and the multitaper Rust backend all import with
-the expected surface). To re-check by hand from the activated venv:
+The bootstrap runs `scripts/check_install.py`, which checks that pydynamo
+imports and that the installed `dynamo_rs` has every binding pydynamo
+calls. To re-check by hand from the activated venv (in `DYNAM-O_py/`):
 
 ```bash
-python -c "import pydynamo; print(pydynamo.__version__)"
-python -c "from pydynamo.io.stamp import current_stamp; print(current_stamp())"
-python scripts/check_install.py     # from DYNAM-O_py/
+python scripts/check_install.py
 ```
 
-The `current_stamp()` line shows the provenance every written artifact
-gets: `writer_version` is this package's build and `kernel_version` is
-the `dynamo_rs` build (`<semver>+<sha12>[.dirty]`). A `kernel_version`
-of `unknown` means `dynamo_rs` did not import — rerun the bootstrap.
+It prints the pydynamo version, the kernel build
+(`<semver>+<sha12>[.dirty]`) and the kernel's semantics version. Every file
+pydynamo writes carries the same three values. An older kernel build that
+lacks a binding is refused with a rebuild hint, so rerun the bootstrap.
 
 ## Usage
 
-### Recommended sampling frequency: 100 Hz
-
-Pydynamo analyzes 0–30 Hz, so 100 Hz Nyquist is well above anything the
-pipeline cares about. Resampling higher-rate recordings (128 / 200 /
-256 / 500 / 1000 Hz) **down** to 100 Hz before calling `run_dynamo`
-gives a ~2× end-to-end speedup with zero analytical change. The
-multitaper-spectrogram NFFT is `2^nextpow2(Fs / mtm_dsfreqs)` (default
-`mtm_dsfreqs = 0.1`), so anything above **Fs = 102.4 Hz** doubles NFFT
-and spills the spectrogram past CPU L3 cache, costing 2–3× more on
-every downstream stage. Resample with scipy:
+### One recording
 
 ```python
-import numpy as np
-from scipy.signal import resample_poly
+import pydynamo
 
-target_fs = 100
-if Fs != target_fs:
-    from fractions import Fraction
-    f = Fraction(target_fs, int(Fs)).limit_denominator(1000)
-    data = resample_poly(data, f.numerator, f.denominator)
-    Fs = target_fs
-```
+settings = pydynamo.load_settings("batch_settings.json")   # or None for the defaults
+rec = pydynamo.load_recording("night.edf", "C3-A2", "night_staging.csv")
+out = pydynamo.run_dynamo(rec.data, rec.fs, rec.stage_times, rec.stage_vals,
+                          settings=settings)
 
-Zero analytical loss for sleep oscillations (slow oscillations 0.3–1.5 Hz,
-spindles 11–16 Hz, alpha 8–12 Hz, beta 13–30 Hz are all far below 50 Hz
-Nyquist). Skip the resample only if you specifically need spectral content
-above 50 Hz (e.g., gamma analysis beyond pydynamo's analyzed band).
-
-### Basic call
-
-The bundled example EEG ships with the sibling MATLAB checkout: in the
-`DYNAM-O_toolbox` layout it is `../DYNAM-O/example_data/example_data.mat`,
-next to `runExampleData.m`. The three option values below reproduce that
-script's `'segment'` preset (`time_range = [8420 13446]`,
-`SOpower_min_time_in_bin = 5`, `SOphase_min_peak_at_freq = 10`); omit
-them for the full-night defaults.
-
-```python
-import matplotlib.pyplot as plt
-import scipy.io as sio
-from pydynamo import run_dynamo
-
-m = sio.loadmat("../DYNAM-O/example_data/example_data.mat", simplify_cells=True)
-out = run_dynamo(
-    m["data"].ravel(),
-    float(m["Fs"]),
-    m["stage_times"],
-    m["stage_vals"],
-    # MATLAB runExampleData.m 'segment' preset (omit for full-night defaults)
-    time_range=(8420.0, 13446.0),
-    min_time_in_bin=5,
-    min_peak_at_freq=10,
-)
-plt.show()                          # out.fig is the MATLAB-style summary figure
-print(out.stats_table.head())       # per-peak stats
-print(out.SOPHs.SOpower_mat.shape)  # (SOpower_bins, freq_bins)
+out.fig.savefig("summary.png", dpi=200)       # the summary figure
+print(out.stats_table.head())                 # one row per TF-peak
+print(out.SOPHs.SOpower_mat.shape)            # (SO-power bins, freq bins)
 print(out.SOPHs.SOpower_paramfit.params_table)
-print(out.provenance)               # which build computed the numbers
+pydynamo.write_run(out, "results", "night", "C3-A2")
 ```
 
-`run_dynamo` builds the summary figure by default (`plot=True`) and keeps
-it as `out.fig` — `out.fig.savefig("summary.png", dpi=200)` writes it out.
-To re-render a figure without re-running the pipeline, `summary_plot` is
-importable directly and takes the arrays a run produces:
+`load_recording` loads one channel the way the app does: an EDF label or
+expression (`C3`, `C3-A2`, `mean(C3, C4)`, `$[C3-A2 - B]$` for a literal
+label that contains operators), named `references`, and the staging file's
+layout (`time_col`, `stage_col`, `header_lines`, `delimiter`,
+`stage_labels`). Staging clock times are aligned to the EDF start, and
+without a staging file every epoch is N2. With a whole settings file,
+`load_from_settings_file(document, edf, staging)` takes all of those from
+the file.
+
+`run_dynamo` arguments:
+
+- `settings`: the `settings` section of a DYNAM-O settings file, as a dict.
+  Keys it leaves out take the kernel's defaults, so a partial section such
+  as `{"hist": {"soph_stages": [1]}}` works. The desktop app's
+  `documents/SETTINGS_REFERENCE.md` lists every key.
+- `time_range=(start, end)` in seconds limits the run to part of the night.
+- `fit_param_basis=False` / `fit_spline_basis=False` skip those fits.
+- `keep_spectrogram=True` also returns the pass-2 extraction spectrogram as
+  `out.pass2_spectrogram` (over a gigabyte for a full night).
+- `plot=False` skips the figure, `verbose=False` the progress lines.
+
+The run resamples to `settings["resample_target_fs"]` (100 Hz by default,
+as in the app), so `out.fs` is the rate the run used and `out.t` its
+sample times. A fit the kernel declines on a degenerate SOPH is `None`,
+with the reason in `out.skipped` and as a warning.
+
+### Settings files
+
+`load_settings(path_or_dict)` accepts a whole settings file
+(`batch_settings.json`, a `dynamo-cli` manifest) or a bare section. A file
+written under an older semantics version is migrated with the same steps as
+`dynamo-cli migrate-settings`, and a warning lists them.
+`default_settings()` returns the full default section, and
+`merge_settings(base, overrides)` layers one section onto another key by key.
+
+### A cohort
 
 ```python
-import numpy as np
-from pydynamo import summary_plot
+import json
+import pydynamo
 
-t = np.arange(len(out.artifacts)) / float(m["Fs"]) + 8420.0
-fig = summary_plot(
-    out.spect, out.stimes, out.sfreqs, out.artifacts, t,
-    m["stage_times"], m["stage_vals"], out.stats_table, out.SOPHs,
-    time_range=(8420.0, 13446.0),
-)
+document = json.load(open("batch_settings.json"))
+settings = pydynamo.load_settings(document)
+channel = document["channel_labels"][0]
+for edf, staging, subject in zip(document["data_files"],
+                                 document["staging_files"],
+                                 document["subject_ids"]):
+    rec = pydynamo.load_from_settings_file(document, edf, staging)
+    out = pydynamo.run_dynamo(rec.data, rec.fs, rec.stage_times, rec.stage_vals,
+                              settings=settings, plot=False)
+    pydynamo.write_run(out, "results", subject, channel)
 ```
 
-The parametric fits run in the shared Rust kernel (`dynamo_rs.fit_paramfits`),
-so given the same SOPHs and TF-peaks they are identical to the DYNAM-O app's.
-Options are the `paramfit` section of a DYNAM-O settings file, passed as a dict:
-`run_dynamo(..., paramfit_settings=settings["settings"]["paramfit"])`; omitted
-keys take the defaults (the app's `documents/SETTINGS_REFERENCE.md` lists every
-key). Each result has the numeric `params` array (`Density, FreqMean, FreqStd,
-SOMean, SOStd, Theta`) and `params_table`, a pandas DataFrame holding exactly
-the paramfit CSV's columns: `Volume`, power-mode `PrefPhase`/`Coupling`,
-phase-mode `SOpowerMean`, and the per-mode `Pk*` TF-peak summaries. A fit the
-kernel declines (a degenerate SOPH) is `None`, with the reason as a warning.
+### Fits on SOPHs you already have
 
-### Batch example
+`fit_paramfits` and `fit_splinefits` run the kernel's fits on any pair of
+SOPHs (`(n_feature, n_freq)` matrices and their bin centers), with the
+`paramfit` or `splinefit` options of a settings section.
+`fit_paramfits` also takes the TF-peak table and the baseline, which
+the per-mode `Pk*` columns need. Each returns `(power, phase, skipped)`.
 
-Loop a cohort and write the canonical output tree (see "Reading and
-writing the DYNAM-O output tree" below) so the results open in the
-desktop app, `dynamo-cli`, and the MATLAB Results Browser. EDF inputs
-load via `pydynamo.io_edf.read_edf` / `read_staging`:
+## The output tree
+
+`write_run(out, root, subject, channel)` writes the stats CSV, both SOPH
+TIFFs, the auxiliary-data HDF5, both paramfit CSVs and both splinefit TIFFs
+where the app writes them, and honors the same `settings["output"]`
+switches. A results root can mix pydynamo and app runs and opens in the
+app. Figures are not written into the tree, since `out.fig` is pydynamo's
+own summary figure.
+
+The readers and writers are in `pydynamo.io`. The normative spec is
+`documents/OUTPUT_FORMAT.md` in the DYNAM-O_DesktopApp repo: §1-2 for
+the layout and file names, §8 for the provenance stamp every file carries
+(`format`, `writer`, `writer_version`, `kernel_version`, `semantics`). The
+stats CSV is written by the kernel's own writer, with the app's precision
+rules. Readers accept the older formats and return the recovered
+provenance with the data:
 
 ```python
 import pydynamo.io as pio
-from pydynamo import run_dynamo
-from pydynamo.io_edf import read_edf, read_staging
 
-root, channel = "results", "C3"
-for subject in ("S001", "S002"):
-    edf = read_edf(f"/data/{subject}.edf", label=channel)
-    times, vals = read_staging(f"/data/{subject}_stages.csv")
-    out = run_dynamo(edf["data"], edf["fs"], times, vals, plot=False)
-    s = out.SOPHs
-    pio.write_stats_csv(out.stats_table,
-                        pio.stats_csv_path(root, subject, channel),
-                        out.provenance, subject_id=subject)
-    pio.write_soph_tiff(pio.soph_tiff_path(root, subject, channel, "power"),
-                        s.SOpower_mat, s.SOpower_bins, s.freq_bins,
-                        "sopower", subject)
-    pio.write_soph_tiff(pio.soph_tiff_path(root, subject, channel, "phase"),
-                        s.SOphase_mat, s.SOphase_bins, s.freq_bins,
-                        "sophase", subject)
-    pio.append_run_item(root, subject=subject, channel=channel,
-                        input_file=f"/data/{subject}.edf",
-                        peaks=len(out.stats_table))
+df, prov = pio.read_stats_csv(pio.stats_csv_path("results", "night", "C3-A2"))
 ```
-
-The same pattern extends to the paramfit CSVs, splinefit TIFFs, and the
-auxiliary-data h5 (`pio.write_paramfit_csv`, `pio.write_splinefit_tiff`,
-`pio.write_auxiliary_data_h5`).
-
-## Reading and writing the DYNAM-O output tree
-
-The numeric core is in-memory-only; the `pydynamo.io` package holds the
-readers and writers for the canonical on-disk results tree shared by
-`dynamo-cli`, the desktop app, and the MATLAB toolbox. The normative
-spec is `documents/OUTPUT_FORMAT.md` in the DYNAM-O_DesktopApp repo —
-§1-2 for the tree layout and filenames, §8 for the provenance stamp
-every artifact carries (`format` / `writer` / `writer_version` /
-`kernel_version`).
-
-```python
-import pydynamo.io as pio
-
-out = run_dynamo(...)                       # out.provenance is the run's stamp
-p = pio.stats_csv_path(root, "S001", "C3")  # <root>/C3/TFpeaks/S001_stats_table_C3.csv
-pio.write_stats_csv(out.stats_table, p, out.provenance, subject_id="S001")
-df, prov = pio.read_stats_csv(p)            # accepts formats 1/2/3
-```
-
-Writers exist for every per-(subject, channel) artifact: the stats CSV,
-SOPH and splinefit TIFFs, paramfit CSVs, the auxiliary-data HDF5, and
-the `_runs/*.jsonl` run index. Readers accept the legacy formats per
-the spec's §8.3 tolerance rules and return the recovered provenance
-alongside the data. When the `dynamo_rs` kernel is unavailable and a
-pure-Python fallback computes the numbers, stamps report
-`kernel_version='python-native'`.
 
 ## Stage convention
 
-DYNAM-O uses `1=N3, 2=N2, 3=N1, 4=REM, 5=Wake` — reversed from most EDF
-stagers. Pass stages in this convention or histograms will be empty or
-inverted.
+DYNAM-O uses `1=N3, 2=N2, 3=N1, 4=REM, 5=Wake`, reversed from most stagers.
+`load_recording` returns DYNAM-O codes. Stages you pass in yourself must
+use this convention, or the SOPHs come out empty or inverted.
 
-## Side-by-side figures
+## Statistics
 
-`scripts/compare_matlab_vs_pydynamo.py` renders MATLAB's output and
-pydynamo's output through the identical `summary_plot` code, so any visual
-difference is pure data difference (not color scaling or layout).
-
-![segment comparison](data_cache/compare_segment_sidebyside.png)
-
-![night comparison](data_cache/compare_night_sidebyside.png)
-
-## Validation data
-
-All ground-truth comparison uses `runDYNAMO` output from the DYNAM-O repo's
-bundled example EEG (`example_data.mat`). Regenerate MATLAB intermediates
-once from the DYNAM-O repo root:
-
-```matlab
-run('<path-to-DYNAM-O_py>/scripts/export_bisect_intermediates.m')
-run('<path-to-DYNAM-O_py>/scripts/export_merge_diagnostics.m')
-run('<path-to-DYNAM-O_py>/scripts/export_pass1_diagnostics.m')
-```
-
-These populate `data_cache/` with `.mat` / `.csv` files (not version-controlled).
+`pydynamo.stats` wraps the kernel's FDR and permutation tests
+(`fdr_1d`, `fdr_2d`, `gpermtest`, `gpermtest2`), checked against
+MATLAB fixtures in `tests/fixtures/`.
 
 ## Troubleshooting
 
-- **NaNs in `data`** — `run_dynamo` expects a finite EEG vector. NaN
-  samples propagate through the multitaper spectrogram and poison the
-  baseline percentile. Repair or crop the recording first (NaN gaps from
-  hardware dropouts are usually detected by the artifact stage anyway
-  once replaced with zeros, but explicit cropping via `time_range` is
-  cleaner).
-- **`stage_times` / `stage_vals` mismatch** — the two vectors must be the
-  same length, in seconds since the start of `data` (not clock time), and
-  cover the span you analyze. `run_dynamo` derives its default
-  `time_range` from the first and last valid stage, so staging that does
-  not overlap the recording produces `No valid stages found` or an empty
-  analysis window.
-- **Empty or inverted histograms** — almost always the stage convention.
-  DYNAM-O uses `1=N3, 2=N2, 3=N1, 4=REM, 5=Wake` (see "Stage
-  convention" above), reversed from most EDF stagers; histograms default
-  to NREM stages `(1, 2, 3)`. `pydynamo.io_edf.read_staging` already
-  returns DYNAM-O codes.
-- **`dynamo_rs` missing** — most stages fall back to pure Python /
-  scipy / scikit-image. The first fallback fires a single
-  `RuntimeWarning` and every artifact written from that process is
-  stamped `kernel_version='python-native'` instead of the Rust build id
-  (the parametric and spline fits have no Python fallback and raise
-  `ImportError`). Rerun the DYNAM-O_toolbox bootstrap to rebuild the
-  kernel.
+- **`KernelUnavailable`**: `dynamo_rs` is missing or older than this
+  pydynamo. Rerun the DYNAM-O_toolbox bootstrap.
+- **`ValueError` from `run_dynamo`**: the kernel rejected the input or the
+  settings (for example `stage_times` and `stage_vals` of different
+  lengths, or a settings value of the wrong type). The message names the
+  problem.
+- **Empty or inverted SOPHs**: almost always the stage convention (see
+  above).
 
 ## Tests
 
@@ -378,6 +230,8 @@ These populate `data_cache/` with `.mat` / `.csv` files (not version-controlled)
 pytest tests/
 ```
 
-Smoke + unit coverage for spectrogram, artifacts, baseline, SOpower timeseries,
-SOpower histogram binning from MATLAB peaks, slope_test, watershed-vs-MATLAB
-equivalence, and an end-to-end run.
+The tests check that `run_dynamo` returns exactly what a direct
+`dynamo_rs.run_dynamo` call returns on a seeded synthetic recording, that
+settings reach the kernel, and the loaders, the settings helpers and every
+writer and reader. The numbers themselves are tested in DYNAM-O_rs,
+against MATLAB.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Smoke-check the documented three-repository development install."""
+"""Smoke-check a pydynamo install: the package and the kernel bindings it calls."""
 
 from importlib import import_module
 
@@ -25,43 +25,19 @@ def _require_module(name, required=()):
 
 
 def main():
-    pydynamo = _require_module("pydynamo", ("run_dynamo",))
-    _require_module(
-        "pydynamo.soph.paramfit",
-        ("ParamFitResult", "fit_paramfits"),
+    pydynamo = _require_module(
+        "pydynamo",
+        ("run_dynamo", "load_recording", "load_settings", "write_run"),
     )
-    _require_module(
-        "pydynamo.soph.splinefit",
-        (
-            "SplineBasisOpts",
-            "SplineFitResult",
-            "SplineObject",
-            "fit_spline_basis",
-        ),
-    )
-    _require_module(
-        "dynamo_rs",
-        (
-            "extract_tfpeaks",
-            "fit_rotgauss",
-            "fit_tensor_product_spline",
-            "fit_vmgauss",
-            "read_edf",
-            "read_staging",
-        ),
-    )
-    _require_module("multitaper_rs", ("compute_spectrogram",))
-    wrapper = _require_module("multitaper_spectrogram_python")
-    if not getattr(wrapper, "_HAS_RUST", False):
-        raise SystemExit(
-            "FAILED: the multitaper wrapper imported without its Rust backend. "
-            "Rebuild multitaper_rs using the README.md command."
-        )
+    # The kernel bindings pydynamo calls (checked by name in pydynamo._kernel).
+    from pydynamo import _kernel
+
+    _require_module("dynamo_rs", _kernel._REQUIRED)
+    import dynamo_rs
 
     print(
-        "OK: pydynamo "
-        f"{pydynamo.__version__}, standalone parametric/spline fits, "
-        "dynamo_rs, and multitaper_rs are importable."
+        f"OK: pydynamo {pydynamo.__version__} on dynamo_rs "
+        f"{dynamo_rs.build_info()['build_info']} (semantics {dynamo_rs.SEMANTICS_VERSION})."
     )
     return 0
 
