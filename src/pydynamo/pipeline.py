@@ -43,11 +43,7 @@ from pydynamo.defaults import (
     BaselineOpts, DetectionOpts, SOPHOpts, derived_peak_filters,
 )
 from pydynamo.soph.histogram import so_power_histogram, so_phase_histogram
-from pydynamo.soph.paramfit import (
-    ParamBasisOpts,
-    ParamFitResult,
-    fit_param_basis as _fit_param_basis,
-)
+from pydynamo.soph.paramfit import ParamFitResult, fit_paramfits
 from pydynamo.soph.splinefit import (
     SplineBasisOpts,
     SplineFitResult,
@@ -173,8 +169,7 @@ def run_dynamo(
     detection_opts: DetectionOpts | None = None,
     baseline_opts: BaselineOpts | None = None,
     soph_opts: SOPHOpts | None = None,
-    param_basis_power_opts: ParamBasisOpts | None = None,
-    param_basis_phase_opts: ParamBasisOpts | None = None,
+    paramfit_settings: dict | None = None,
     spline_basis_power_opts: SplineBasisOpts | None = None,
     spline_basis_phase_opts: SplineBasisOpts | None = None,
     fit_param_basis: bool = True,
@@ -200,6 +195,11 @@ def run_dynamo(
     Options mirror the MATLAB `runDYNAMO` option structs. Parametric and spline
     fitting run by default; pass the corresponding ``fit_*_basis=False`` flag
     to skip either fit family.
+
+    ``paramfit_settings`` is the ``paramfit`` section of a DYNAM-O settings
+    file, as a dict (``{"power": {...}, "phase": {...}, "peak_assign":
+    ...}``); None uses the defaults. The parametric fits run in the shared
+    kernel, so they match the DYNAM-O app and CLI exactly.
     """
     det = detection_opts if detection_opts is not None else DetectionOpts()
     base = baseline_opts if baseline_opts is not None else BaselineOpts()
@@ -478,7 +478,6 @@ def run_dynamo(
         "SO-power and SO-phase histograms included different TF peaks."
     )
     peak_selection_inds = power_peak_selection
-    stats_table_soph = stats.loc[peak_selection_inds]
 
     sophs = SOPHsResult(
         SOpower_mat=sopow["c_mat"], SOphase_mat=sopha["c_mat"],
@@ -496,36 +495,22 @@ def run_dynamo(
         if verbose:
             print("[dynamo] fitting parametric basis...")
         with _timer(timings, "fit_param_basis"):
-            # Match fitParamBasis.m: phase runs first, and one failed fit does
-            # not discard a successful fit on the other axis.
-            try:
-                sophs.SOphase_paramfit = _fit_param_basis(
-                    sophs.SOphase_mat, sophs.SOphase_bins, sophs.freq_bins,
-                    opts=param_basis_phase_opts, kind="phase",
-                    stats_table_soph=stats_table_soph,
-                    baseline=(extract_baseline, sfreqs),
-                )
-            except Exception as exc:
+            # Both fits and their tables run in the kernel, the same code
+            # the DYNAM-O app runs. A declined fit (degenerate SOPH) leaves
+            # that axis None and does not affect the other axis.
+            power_fit, phase_fit, skipped = fit_paramfits(
+                sophs.SOpower_mat, sophs.SOphase_mat,
+                sophs.SOpower_bins, sophs.SOphase_bins, sophs.freq_bins,
+                paramfit_settings,
+                stats_table=stats,
+                peak_in_hist=peak_selection_inds,
+                baseline=(extract_baseline, sfreqs),
+            )
+            sophs.SOpower_paramfit = power_fit
+            sophs.SOphase_paramfit = phase_fit
+            for axis, reason in skipped.items():
                 warnings.warn(
-                    f"SO-phase parametric fit failed: {exc}",
-                    RuntimeWarning,
-                    stacklevel=2,
-                )
-            try:
-                sophs.SOpower_paramfit = _fit_param_basis(
-                    sophs.SOpower_mat, sophs.SOpower_bins, sophs.freq_bins,
-                    opts=param_basis_power_opts, kind="power",
-                    stats_table_soph=stats_table_soph,
-                    baseline=(extract_baseline, sfreqs),
-                    phase_model_soph=(
-                        sophs.SOphase_paramfit.model_soph
-                        if sophs.SOphase_paramfit is not None else None
-                    ),
-                    phase_bins=sophs.SOphase_bins,
-                )
-            except Exception as exc:
-                warnings.warn(
-                    f"SO-power parametric fit failed: {exc}",
+                    f"SO-{axis} parametric fit skipped: {reason}",
                     RuntimeWarning,
                     stacklevel=2,
                 )

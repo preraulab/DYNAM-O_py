@@ -76,7 +76,7 @@ def test_end_to_end_segment(example_data, tmp_path):
     )
     assert tuple(out.SOPHs.SOphase_paramfit.params_table.columns) == (
         "Density", "FreqMean", "FreqStd", "SOphaseMean", "SOphaseStd",
-        "Theta", "Volume", "PkCount", "PkFreq", "PkDuration", "PkBandwidth",
+        "Theta", "Volume", "SOpowerMean", "PkCount", "PkFreq", "PkDuration", "PkBandwidth",
         "PkHeight", "PkPower", "PkVolume", "PkArea", "PkPeakiness", "PkSOpower",
         "PkSOphase",
     )

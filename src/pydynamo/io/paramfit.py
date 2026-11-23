@@ -1,8 +1,8 @@
 """Parametric-basis fit CSV (OUTPUT_FORMAT.md §2.4, format 3).
 
-Serializes one axis's `pydynamo.soph.paramfit.ParamFitResult` — whose
-``params_table`` (built by `soph/paramfit/output.py`) already carries
-the canonical per-mode column values — plus the goodness-of-fit
+Serializes one axis's `pydynamo.soph.paramfit.ParamFitResult`, whose
+``params_table`` (computed by the kernel's `fits_table`) already holds
+the canonical per-mode column values, plus the goodness-of-fit
 scalars, background coefficients, and source bins into the same file
 `dynamo-export::fits_writer::write_paramfit_csv` produces:
 
@@ -31,7 +31,7 @@ from pathlib import Path
 import numpy as np
 
 from pydynamo.io.stamp import Provenance
-from pydynamo.soph.paramfit.output import PK_COLUMNS
+from pydynamo.soph.paramfit import PK_COLUMNS
 
 #: Paramfit-CSV schema version this module writes (§8.2): format 3 =
 #: the §8.1 stamp block + the format-2 numerics (true-σ widths). Format
@@ -86,8 +86,8 @@ def write_paramfit_csv(
     freq_bins,
     subject_id: str = "",
     stamp: Provenance | None = None,
-    unit_row: float = math.nan,
-    peak_assign: str = "",
+    unit_row: float | None = None,
+    peak_assign: str | None = None,
 ) -> None:
     """Write one axis's parametric fit as a format-3 paramfit CSV.
 
@@ -103,15 +103,12 @@ def write_paramfit_csv(
           file alone.
     subject_id : emitted as ``# subjectID:`` when non-empty.
     stamp : §8.1 provenance; ``None`` uses this process's current stamp.
-    unit_row : phase-axis row-normalization scale. pydynamo does not
-          carry one, so the default emits ``NaN`` (as the Rust writer
-          does for the power axis).
-    peak_assign : canonical label of the assignment rule the ``Pk*``
-          columns were computed under, as EFFECTIVELY used on this axis
-          (``parse_peak_assign(...)["label"]``; the phase axis records
-          the ``0.95 p`` fallback under the density rules). Empty
-          omits the line — readers ignore unknown ``#`` keys, so old
-          files and old readers are both unaffected.
+    unit_row : row-normalization scale (1 for phase, NaN for power).
+          None takes the fit's own ``unit_row``.
+    peak_assign : label of the assignment rule the ``Pk*`` columns were
+          computed under, as used on this axis (the phase axis records
+          its ``0.95 p`` fallback under the density rules). None takes
+          the fit's own ``peak_assign``; empty omits the line.
     """
     if axis not in _BG_KEYS:
         raise ValueError(f"axis must be 'power' or 'phase', got {axis!r}")
@@ -121,6 +118,11 @@ def write_paramfit_csv(
 
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
+
+    if unit_row is None:
+        unit_row = getattr(fit, "unit_row", math.nan)
+    if peak_assign is None:
+        peak_assign = getattr(fit, "peak_assign", "")
 
     table = fit.params_table
     n_modes = len(table)

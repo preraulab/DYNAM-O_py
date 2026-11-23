@@ -9,7 +9,7 @@ import pydynamo.pipeline as pipeline
 from pydynamo.defaults import DetectionOpts
 
 
-def test_run_dynamo_passes_soph_peaks_and_phase_model_to_paramfits(monkeypatch):
+def test_run_dynamo_passes_sophs_and_peaks_to_the_kernel_fit(monkeypatch):
     stats = pd.DataFrame({
         "PeakTime": [0.5, 1.5, 2.5],
         "PeakFrequency": [6.0, 8.0, 10.0],
@@ -96,11 +96,11 @@ def test_run_dynamo_passes_soph_peaks_and_phase_model_to_paramfits(monkeypatch):
     phase_result = SimpleNamespace(model_soph=phase_model)
     power_result = SimpleNamespace(model_soph=np.ones((2, 2)))
 
-    def fake_fit(*_args, **kwargs):
-        calls.append(kwargs)
-        return phase_result if kwargs["kind"] == "phase" else power_result
+    def fake_fit(*args, **kwargs):
+        calls.append((args, kwargs))
+        return power_result, phase_result, {}
 
-    monkeypatch.setattr(pipeline, "_fit_param_basis", fake_fit)
+    monkeypatch.setattr(pipeline, "fit_paramfits", fake_fit)
 
     out = pipeline.run_dynamo(
         np.zeros(4),
@@ -115,12 +115,13 @@ def test_run_dynamo_passes_soph_peaks_and_phase_model_to_paramfits(monkeypatch):
         verbose=False,
     )
 
-    assert [call["kind"] for call in calls] == ["phase", "power"]
-    phase_stats = calls[0]["stats_table_soph"]
-    power_stats = calls[1]["stats_table_soph"]
-    assert phase_stats["PeakFrequency"].tolist() == [6.0, 10.0]
-    assert power_stats.equals(phase_stats)
-    assert np.array_equal(calls[1]["phase_model_soph"], phase_model)
-    assert np.array_equal(calls[1]["phase_bins"], [-np.pi, np.pi])
+    # One kernel call fits both axes. It gets every TF-peak plus the mask
+    # of the ones the SOPHs counted, so the kernel picks the Pk* members.
+    assert len(calls) == 1
+    args, kwargs = calls[0]
+    assert np.array_equal(args[3], [-np.pi, np.pi])
+    assert kwargs["stats_table"]["PeakFrequency"].tolist() == [6.0, 8.0, 10.0]
+    assert kwargs["peak_in_hist"].tolist() == [True, False, True]
+    assert kwargs["baseline"] is not None
     assert out.SOPHs.SOphase_paramfit is phase_result
     assert out.SOPHs.SOpower_paramfit is power_result

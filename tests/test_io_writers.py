@@ -13,7 +13,6 @@ import pytest
 
 import pydynamo.io as pio
 from pydynamo.io.stats import STATS_CSV_HEADER, STATS_CSV_HEADER_V1
-from pydynamo.soph.paramfit.output import create_params_table
 
 
 @pytest.fixture
@@ -140,10 +139,18 @@ def test_io_compat_load_stats_csv_skips_preamble(tmp_path, stats_df, stamp):
 
 # ------------------------------------------------------------- paramfit CSV
 
+def _params_table(row: dict) -> pd.DataFrame:
+    """A one-mode paramfit table. Columns not given are left out, and the
+    writer fills them with NaN (PkCount with 0)."""
+    return pd.DataFrame([row])
+
+
 def _power_fit():
-    table = create_params_table(
-        np.array([[2.0, 11.0, 1.5, 3.0, 4.0, 0.0]]), "power"
-    )
+    table = _params_table({
+        "Density": 2.0, "FreqMean": 11.0, "FreqStd": 1.5,
+        "SOpowerMean": 3.0, "SOpowerStd": 4.0, "Theta": 0.0,
+        "Volume": 2.0 * 2.0 * np.pi * 4.0 * 1.5,
+    })
     return SimpleNamespace(
         background=np.array([0.1, 0.2, 0.3]),
         gof={"sse": 1.0, "rsquare": 0.9, "adjrsquare": 0.8,
@@ -169,7 +176,7 @@ def test_paramfit_csv_round_trip_power(tmp_path, stamp):
     np.testing.assert_allclose(meta["freq_bins"], [10.0, 11.0, 12.0])
     assert df.columns[0] == "Density"
     assert "PrefPhase" in df.columns and "PkSOphase" in df.columns
-    # Mode volume: density * 2π * xstd * fstd.
+    # The table's values are written as they are.
     np.testing.assert_allclose(
         df["Volume"][0], 2.0 * 2.0 * np.pi * 4.0 * 1.5
     )
@@ -177,9 +184,10 @@ def test_paramfit_csv_round_trip_power(tmp_path, stamp):
 
 
 def test_paramfit_csv_round_trip_phase(tmp_path, stamp):
-    table = create_params_table(
-        np.array([[0.5, 11.0, 1.5, 0.3, 1.2, 0.0]]), "phase"
-    )
+    table = _params_table({
+        "Density": 0.5, "FreqMean": 11.0, "FreqStd": 1.5,
+        "SOphaseMean": 0.3, "SOphaseStd": 1.2, "Theta": 0.0,
+    })
     fit = SimpleNamespace(
         background=np.array([0.4, -0.5, 0.6]),
         gof={"sse": 1.0, "rsquare": 0.9, "adjrsquare": 0.8,
@@ -193,8 +201,8 @@ def test_paramfit_csv_round_trip_phase(tmp_path, stamp):
     df, meta, prov = pio.read_paramfit_csv(p)
     assert meta["fit_type"] == "phase"
     assert meta["background.SinAmp"] == 0.4
-    # The canonical phase column set includes the cross-axis SOpowerMean
-    # (NaN placeholder — pydynamo's table does not carry it).
+    # The canonical phase column set includes the cross-axis SOpowerMean;
+    # a table without it is written with NaN there.
     assert list(df.columns[:8]) == [
         "Density", "FreqMean", "FreqStd", "SOphaseMean", "SOphaseStd",
         "Theta", "Volume", "SOpowerMean",

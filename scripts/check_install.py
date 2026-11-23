@@ -28,7 +28,7 @@ def main():
     pydynamo = _require_module("pydynamo", ("run_dynamo",))
     _require_module(
         "pydynamo.soph.paramfit",
-        ("ParamBasisOpts", "fit_param_basis"),
+        ("ParamFitResult", "fit_paramfits"),
     )
     _require_module(
         "pydynamo.soph.splinefit",

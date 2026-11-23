@@ -10,7 +10,7 @@ most EDF stagers. Histograms default to NREM (stages 1, 2, 3).
 from pydynamo.defaults import DetectionOpts, BaselineOpts, SOPHOpts
 from pydynamo.pipeline import run_dynamo, DynamoOutput
 from pydynamo.plot import summary_plot
-from pydynamo.soph.paramfit import ParamBasisOpts, ParamFitResult
+from pydynamo.soph.paramfit import ParamFitResult
 from pydynamo.soph.splinefit import (
     SplineBasisOpts,
     SplineFitResult,
@@ -19,7 +19,7 @@ from pydynamo.soph.splinefit import (
 from pydynamo import matlab_api  # noqa: F401  — exposed for `py.pydynamo.matlab_api.*`
 
 __all__ = ["run_dynamo", "summary_plot", "DynamoOutput", "DetectionOpts",
-           "BaselineOpts", "SOPHOpts", "ParamBasisOpts", "ParamFitResult",
+           "BaselineOpts", "SOPHOpts", "ParamFitResult",
            "SplineBasisOpts", "SplineFitResult", "SplineObject", "matlab_api"]
 
 try:

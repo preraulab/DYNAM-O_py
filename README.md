@@ -31,8 +31,11 @@ Time-series + metadata pipelines (ported this session — mirror pydynamo 1:1):
 - `detect_artifacts` — two-band (HF + BB) robust-z-score artifact detection. Bit-identical to `pydynamo.artifacts.detect_artifacts(..., slope_test=False)`. (Slope-test branch is a follow-up — needs multitaper.)
 - `build_baseline_exclude`, `compute_baseline`, `subtract_baseline` — full baseline subpipeline.
 - `hilbert`, `sosfiltfilt`, `movmean`, `unwrap` — raw primitives (pydynamo already picks `movmean` up for the artifact detrend).
-- `fit_rotgauss`, `fit_vmgauss`, `fit_tensor_product_spline` — shared
-  parametric and spline-basis fit kernels used by the default Python pipeline.
+- `fit_paramfits` — both parametric-basis fits of a recording's SOPHs and
+  their paramfit tables, the same code the DYNAM-O app and CLI run, so the
+  fits and tables match the app's exactly. pydynamo's
+  `pydynamo.soph.paramfit` is a thin wrapper over it.
+- `fit_tensor_product_spline` — the spline-basis fit kernel.
   Set `fit_param_basis=False` or `fit_spline_basis=False` to skip either fit
   family. Each spline result includes a callable `spline_obj` with the fitted
   coefficients, augmented knots, and spline order.
@@ -238,11 +241,16 @@ fig = summary_plot(
 )
 ```
 
-Each parametric-fit result keeps the legacy numeric `params` array and also
-provides `params_table`, a pandas DataFrame with MATLAB-compatible named
-columns such as `Volume`, power-mode `PrefPhase`/`Coupling`, and the per-mode
-`Pk*` TF-peak summaries. Zero-mode fits retain the same named columns with no
-rows.
+The parametric fits run in the shared Rust kernel (`dynamo_rs.fit_paramfits`),
+so given the same SOPHs and TF-peaks they are identical to the DYNAM-O app's.
+Options are the `paramfit` section of a DYNAM-O settings file, passed as a dict:
+`run_dynamo(..., paramfit_settings=settings["settings"]["paramfit"])`; omitted
+keys take the defaults (the app's `documents/SETTINGS_REFERENCE.md` lists every
+key). Each result has the numeric `params` array (`Density, FreqMean, FreqStd,
+SOMean, SOStd, Theta`) and `params_table`, a pandas DataFrame holding exactly
+the paramfit CSV's columns: `Volume`, power-mode `PrefPhase`/`Coupling`,
+phase-mode `SOpowerMean`, and the per-mode `Pk*` TF-peak summaries. A fit the
+kernel declines (a degenerate SOPH) is `None`, with the reason as a warning.
 
 ### Batch example
 
